@@ -41,13 +41,21 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		 * @param mixed $attachments
 		 * @return boolean
 		 */
-		public function send( $to, $subject, $message, $headers = '', $attachments = array(), $embeds = array(), $applyMailFilter = true ) {
+		public function send( $to, $subject, $message, $headers = '', $attachments = array(), $embeds = array(), $applyMailFilter = true, $replayBodies = null ) {
 
 			// initialize for sending
 			$this->init();
 
 			// build the message
 			$postmanMessage = $this->processWpMailCall( $to, $subject, $message, $headers, $attachments, $embeds, $applyMailFilter );
+            if ( $replayBodies !== null ) {
+                $postmanMessage->setContentType( 'text/html' );
+                $postmanMessage->setCharset( $replayBodies['charset'] );
+                $postmanMessage->setBody( $replayBodies['html'] );
+                $postmanMessage->setBodyHtmlPart( $replayBodies['html'] );
+                $postmanMessage->setBodyTextPart( $replayBodies['text'] );
+            }
+
 
 			/*
 			 * Build the email log entry from the *final* message, after all wp_mail

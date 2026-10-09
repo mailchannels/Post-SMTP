@@ -216,12 +216,12 @@ class PostmanEmailLogController {
 			}
 
 			try {
-                $attachments = PostmanAttachmentReplay::restore( $postid, isset( $meta_values['session_transcript'][0] ) ? $meta_values['session_transcript'][0] : '', true );
+                $attachments = PostmanAttachmentReplay::restore( $postid, isset( $meta_values['session_transcript'][0] ) ? $meta_values['session_transcript'][0] : '', true, $bodies );
             } catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
             $attachments = apply_filters( 'post_smtp_resend_attachments', $attachments, $postid );
             try { $replay = PostmanLogReplay::begin( $postid, true ); }
             catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
-            $success = wp_mail( $to, $meta_values ['original_subject'] [0], $meta_values ['original_message'] [0], $meta_values ['original_headers'] [0], $attachments );
+            $success = PostmanAttachmentReplay::send( $to, $meta_values ['original_subject'] [0], $meta_values ['original_message'] [0], $meta_values ['original_headers'] [0], $attachments, $bodies );
 
 			// Postman API: retrieve the result of sending this message from Postman
 			$result = apply_filters( 'postman_wp_mail_result', null );

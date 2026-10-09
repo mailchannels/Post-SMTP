@@ -259,6 +259,8 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
             $snapshot = $message ? PostmanAttachmentReplay::capture( $message ) : null;
             if ( $snapshot !== null && strpos( (string) $log->sessionTranscript, PostmanAttachmentReplay::REQUIRED ) === false ) { $log->sessionTranscript .= "\n" . PostmanAttachmentReplay::REQUIRED; }
 
+            if ( $snapshot !== null && $message && $message->getBodyTextPart() !== null && $message->getBodyTextPart() !== '' && $message->getBodyHtmlPart() !== null && $message->getBodyHtmlPart() !== '' ) { $log->sessionTranscript .= "\n" . PostmanAttachmentReplay::BODIES_REQUIRED; }
+
             $new_status = $log->statusMessage;
 
 			if ( $options->is_fallback && empty( $log->statusMessage ) ) {

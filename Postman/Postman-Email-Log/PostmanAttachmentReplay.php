@@ -5,9 +5,11 @@ defined( 'ABSPATH' ) || exit;
 class PostmanAttachmentReplay {
     const KEY = 'post_smtp_attachment_snapshot';
     const REQUIRED = 'Post SMTP attachment snapshot required.';
+    const BODIES_REQUIRED = 'Post SMTP alternative body snapshot required.';
 
     public static function capture( PostmanMessage $message ) {
-        if ( empty( $message->getAttachments() ) ) { return null; }
+        $has_bodies = $message->getBodyTextPart() !== null && $message->getBodyTextPart() !== '' && $message->getBodyHtmlPart() !== null && $message->getBodyHtmlPart() !== '';
+        if ( empty( $message->getAttachments() ) && ! $has_bodies ) { return null; }
         try {
             $parts = $message->getAttachmentParts();
             foreach ( $parts as &$part ) {
@@ -16,7 +18,13 @@ class PostmanAttachmentReplay {
                 unset( $part['data'] );
             }
             unset( $part );
-            return json_encode( array( 'version'=>1, 'parts'=>$parts ) );
+            $manifest = array( 'version'=>1, 'parts'=>$parts );
+            if ( $has_bodies ) {
+                $text = $message->getBodyTextPart();
+                $html = $message->getBodyHtmlPart();
+                $manifest['bodies'] = array( 'charset'=>$message->getCharset(), 'text'=>base64_encode( $text ), 'html'=>base64_encode( $html ), 'text_sha256'=>hash( 'sha256', $text ), 'html_sha256'=>hash( 'sha256', $html ) );
+            }
+            return json_encode( $manifest );
         } catch ( Exception $error ) {
             // Original attachments were unreadable: do not offer a partial resend.
             return json_encode( array( 'version'=>1, 'unavailable'=>true ) );
@@ -35,14 +43,15 @@ class PostmanAttachmentReplay {
         return $wpdb->insert( $table, array( 'log_id'=>$id, 'meta_key'=>self::KEY, 'meta_value'=>$snapshot ) ) !== false;
     }
 
-    public static function restore( $id, $transcript, $legacy = false ) {
+    public static function restore( $id, $transcript, $legacy = false, &$bodies = null ) {
+        $bodies = null;
         if ( $legacy ) { $snapshot = get_post_meta( $id, self::KEY, true ); }
         else {
             global $wpdb;
             $snapshot = $wpdb->get_var( PostmanUtils::prepareQueryWithTable( 'SELECT meta_value FROM %i WHERE log_id=%d AND meta_key=%s ORDER BY id DESC LIMIT 1', $wpdb->prefix . 'post_smtp_logmeta', array( $id, self::KEY ) ) );
         }
         if ( $snapshot === null || $snapshot === '' ) {
-            if ( strpos( (string) $transcript, self::REQUIRED ) !== false ) { throw new RuntimeException( self::holdMessage() ); }
+            if ( strpos( (string) $transcript, self::REQUIRED ) !== false || strpos( (string) $transcript, self::BODIES_REQUIRED ) !== false ) { throw new RuntimeException( self::holdMessage() ); }
             return array(); // Older logs have no reliable attachment history.
         }
         $transport = PostmanTransportRegistry::getInstance()->getCurrentTransport();
@@ -51,6 +60,19 @@ class PostmanAttachmentReplay {
         }
         $manifest = json_decode( $snapshot, true );
         if ( ! is_array( $manifest ) || ! isset( $manifest['version'], $manifest['parts'] ) || $manifest['version'] !== 1 || ! is_array( $manifest['parts'] ) || ! empty( $manifest['unavailable'] ) ) { throw new RuntimeException( self::holdMessage() ); }
+        if ( isset( $manifest['bodies'] ) ) {
+            $saved = $manifest['bodies'];
+            foreach ( array( 'charset', 'text', 'html', 'text_sha256', 'html_sha256' ) as $field ) {
+                if ( ! isset( $saved[$field] ) || ! is_string( $saved[$field] ) ) { throw new RuntimeException( self::holdMessage() ); }
+            }
+            if ( ! preg_match( '/^[a-zA-Z0-9._-]+$/D', $saved['charset'] ) ) { throw new RuntimeException( self::holdMessage() ); }
+            $bodies = array( 'charset'=>$saved['charset'] );
+            foreach ( array( 'text', 'html' ) as $field ) {
+                $data = base64_decode( $saved[$field], true );
+                if ( $data === false || ! hash_equals( $saved[$field . '_sha256'], hash( 'sha256', $data ) ) ) { throw new RuntimeException( self::holdMessage() ); }
+                $bodies[$field] = $data;
+            }
+        } elseif ( strpos( (string) $transcript, self::BODIES_REQUIRED ) !== false ) { throw new RuntimeException( self::holdMessage() ); }
         $attachments = array();
         foreach ( $manifest['parts'] as $part ) {
             foreach ( array( 'content', 'sha256', 'filename', 'type', 'disposition', 'encoding', 'cid' ) as $field ) {
@@ -62,6 +84,44 @@ class PostmanAttachmentReplay {
             $attachments[] = array( $data, $part['filename'], $part['filename'], $part['encoding'], $part['type'], true, $part['disposition'], $part['cid'] );
         }
         return $attachments;
+    }
+
+    /** Keep internal tuples out of core wp_mail's file-path attachment API. */
+    public static function send( $to, $subject, $message, $headers, $attachments, $bodies = null ) {
+        $function = new ReflectionFunction( 'wp_mail' );
+        if ( basename( $function->getFileName() ) === 'PostmanWpMailBinder.php' ) {
+            return wp_mail( $to, $subject, $message, $headers, $attachments, array(), $bodies );
+        }
+        $paths = array();
+        $tuples = array();
+        foreach ( (array) $attachments as $attachment ) {
+            if ( is_array( $attachment ) ) { $tuples[] = $attachment; }
+            else { $paths[] = $attachment; }
+        }
+        $hook = static function ( $mailer ) use ( $tuples, $bodies ) {
+            // Core reuses the object without clearing AltBody. Never replay stale content.
+            $mailer->AltBody = '';
+            if ( $bodies !== null ) {
+                $mailer->isHTML( true );
+                $mailer->Body = $bodies['html'];
+                $mailer->AltBody = $bodies['text'];
+                $mailer->CharSet = $bodies['charset'];
+            }
+            foreach ( $tuples as $part ) {
+                if ( count( $part ) < 8 ) { throw new RuntimeException( PostmanAttachmentReplay::holdMessage() ); }
+                if ( $part[6] === 'inline' ) {
+                    $method = $part[5] ? 'addStringEmbeddedImage' : 'addEmbeddedImage';
+                    $ok = $mailer->$method( $part[0], $part[7], $part[2], $part[3], $part[4], $part[6] );
+                } else {
+                    $method = $part[5] ? 'addStringAttachment' : 'addAttachment';
+                    $ok = $mailer->$method( $part[0], $part[2], $part[3], $part[4], $part[6] );
+                }
+                if ( ! $ok ) { throw new RuntimeException( PostmanAttachmentReplay::holdMessage() ); }
+            }
+        };
+        add_action( 'phpmailer_init', $hook, PHP_INT_MAX );
+        try { return wp_mail( $to, $subject, $message, $headers, $paths ); }
+        finally { remove_action( 'phpmailer_init', $hook, PHP_INT_MAX ); }
     }
 
     public static function holdMessage() {

@@ -4,6 +4,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require 'Postman-Email-Log/PostmanEmailQueryLog.php';
+require_once __DIR__ . '/Postman-Email-Log/PostmanAttachmentReplay.php';
+require_once __DIR__ . '/Postman-Email-Log/PostmanLogReplay.php';
 $purifier = dirname(__DIR__) . '/includes/libs/HTMLPurifier/HTMLPurifier.auto.php';
 if ( file_exists( $purifier ) ) {
     require_once $purifier;
@@ -914,13 +916,13 @@ class PostmanEmailLogs {
                  * @version 1.0.0
                  */
                 try {
-                    $attachments = PostmanAttachmentReplay::restore( $id, isset( $log['session_transcript'] ) ? $log['session_transcript'] : '' );
+                    $attachments = PostmanAttachmentReplay::restore( $id, isset( $log['session_transcript'] ) ? $log['session_transcript'] : '', false, $bodies );
                 } catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
                 $attachments = apply_filters( 'post_smtp_resend_attachments', $attachments, $id );
 
                 try { $replay = PostmanLogReplay::begin( $id ); }
                 catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
-                $success = wp_mail( $to, $log['original_subject'], $log['original_message'], $headers, $attachments );
+                $success = PostmanAttachmentReplay::send( $to, $log['original_subject'], $log['original_message'], $headers, $attachments, $bodies );
 
                 // Postman API: retrieve the result of sending this message from Postman
                 $result = apply_filters( 'postman_wp_mail_result', null );

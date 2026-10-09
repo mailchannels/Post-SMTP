@@ -111,7 +111,7 @@ if (! class_exists ( 'PostmanWpMailBinder' )) {
 			 * @since 2.0.25 @action `wp_mail_succeeded` added.
 			 * @return bool Whether the email contents were sent successfully.
 			 */
-			function wp_mail($to, $subject, $message, $headers = '', $attachments = array(), $embeds = array()) {
+			function wp_mail($to, $subject, $message, $headers = '', $attachments = array(), $embeds = array(), $replayBodies = null) {
 				// create an instance of PostmanWpMail to send the message
 				$postmanWpMail = new PostmanWpMail ();
 				// send the mail
@@ -146,7 +146,7 @@ if (! class_exists ( 'PostmanWpMailBinder' )) {
 
 				}
 				
-				$result = $postmanWpMail->send( $atts['to'], $atts['subject'], $atts['message'], isset( $atts['headers'] ) ? $atts['headers'] : '', isset( $atts['attachments'] ) ? $atts['attachments'] : array(), isset( $atts['embeds'] ) ? $atts['embeds'] : array(), false );
+				$result = $postmanWpMail->send( $atts['to'], $atts['subject'], $atts['message'], isset( $atts['headers'] ) ? $atts['headers'] : '', isset( $atts['attachments'] ) ? $atts['attachments'] : array(), isset( $atts['embeds'] ) ? $atts['embeds'] : array(), false, $replayBodies );
 				
 				if( $result ) {
 					do_action( 'wp_mail_succeeded', $atts );
