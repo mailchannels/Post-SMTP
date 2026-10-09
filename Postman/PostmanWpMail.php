@@ -119,7 +119,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
                 if ( $mailer->AltBody !== '' ) { $message->setBodyTextPart( $mailer->AltBody ); }
             } else { $message->setBodyTextPart( $mailer->Body ); }
             if ( $attachments === null ) {
-                $attachments = PostmanOptions::getInstance()->getTransportType() === 'smtp' && method_exists( $mailer, 'getSmtpReplayAttachments' ) ? $mailer->getSmtpReplayAttachments() : $mailer->getAttachments();
+                $attachments = method_exists( $mailer, 'getEffectiveAttachments' ) ? $mailer->getEffectiveAttachments() : $mailer->getAttachments();
             }
             foreach ( $attachments as &$attachment ) {
                 if ( $attachment[6] === 'attachment' && $attachment[7] === 0 ) { $attachment[7] = ''; }

@@ -283,7 +283,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 		}
 
         /** Match native attachAll hash/CID suppression before storing replay parts. */
-        public function getSmtpReplayAttachments() {
+        public function getEffectiveAttachments() {
             $parts = array();
             $included = array();
             $cids = array();
@@ -321,7 +321,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
         /** Read file attachments once without changing native tuples or deduplication. */
         private function freezeSmtpAttachments() {
             $bytes = array();
-            $attachments = $this->getSmtpReplayAttachments();
+            $attachments = $this->getEffectiveAttachments();
             foreach ( $attachments as &$part ) {
                 if ( ! $part[5] ) {
                     $path = $part[0];
