@@ -79,13 +79,21 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
         public function sendPhpMailer( $mailer ) {
             $this->init();
             add_filter( 'postman_wp_mail_result', array( $this, 'postman_wp_mail_result' ) );
-            if ( ! in_array( $mailer->ContentType, array( 'text/plain', 'text/html' ), true ) || count( $mailer->getReplyToAddresses() ) > 1 ) {
-                throw new phpmailerException( 'MailChannels cannot preserve this PHPMailer content type or multiple Reply-To addresses.' );
+            try {
+                if ( ! in_array( $mailer->ContentType, array( 'text/plain', 'text/html' ), true ) || count( $mailer->getReplyToAddresses() ) > 1 ) {
+                    throw new phpmailerException( 'MailChannels cannot preserve this PHPMailer content type or multiple Reply-To addresses.' );
+                }
+                if ( $mailer->DKIM_domain !== '' || $mailer->Ical !== '' || ( $mailer->Sender !== '' && $mailer->Sender !== $mailer->From ) ) {
+                    throw new phpmailerException( 'MailChannels cannot preserve PHPMailer signing, calendar or a separate envelope sender.' );
+                }
+                list( $message, $log ) = $this->createPhpMailerLog( $mailer );
+            } catch ( Exception $error ) {
+                // The result hook must describe validation failures too, so
+                // AJAX replay can report the error without dereferencing null.
+                $this->exception = $error;
+                $this->transcript = 'PHPMailer validation failed before MailChannels submission.';
+                throw $error;
             }
-            if ( $mailer->DKIM_domain !== '' || $mailer->Ical !== '' || ( $mailer->Sender !== '' && $mailer->Sender !== $mailer->From ) ) {
-                throw new phpmailerException( 'MailChannels cannot preserve PHPMailer signing, calendar or a separate envelope sender.' );
-            }
-            list( $message, $log ) = $this->createPhpMailerLog( $mailer );
             // Keep plugin forced-sender/recipient policy; core owns WordPress hooks.
             return $this->sendMessage( $message, $log, false );
         }
