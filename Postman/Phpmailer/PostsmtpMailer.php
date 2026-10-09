@@ -87,6 +87,13 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 		private $transcript = '';
         private $smtpDataEndUnknown = false;
         private $smtpAttachmentBytes = null;
+        private $smtpPhaseStarted = false;
+        private $smtpCallbackPhase = false;
+        private $smtpCallbackSeen = 0;
+        private $smtpCallbackExpected = 0;
+        private $smtpCallbackAccepted = false;
+        private $smtpCallbackOutcome = '';
+
 
 		public function __construct( $exceptions = null ) {
 			parent::__construct( $exceptions );
@@ -197,6 +204,8 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                 $this->error = null;
                 $this->transcript = '';
                 $this->smtpDataEndUnknown = false;
+                $this->smtpPhaseStarted = false;
+                $this->smtpCallbackOutcome = '';
                 $smtp = $this->getSMTPInstance();
                 if ( $smtp instanceof PostmanNativeSmtp ) { $smtp->resetPostmanDataOutcome(); }
                 $this->ErrorInfo = '';
@@ -234,6 +243,12 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                         list( $postmanMessage, $log ) = $postmanWpMail->createPhpMailerLog( $this, $frozen );
                         $log->replayUnsupported = $unsupported;
 						$response = $this->sendSmtp();
+                        // PHPMailer with exceptions disabled returns false from
+                        // postSend. Route that failure through the same log/result
+                        // path, while the outer catch preserves false-return mode.
+                        if ( ! $response ) {
+                            throw new phpmailerException( $this->ErrorInfo !== '' ? $this->ErrorInfo : 'Native SMTP submission failed.' );
+                        }
 						$result = $response;
 						if ( $response ) {
 							do_action( 'post_smtp_on_success', $log, $postmanMessage, $this->transcript, $transport );
@@ -261,6 +276,15 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                     }
                     $this->smtpDataEndUnknown = $this->smtpDataEndUnknown || $outcome === 'accepted' || $outcome === 'unknown';
                 }
+                if ( $this->options->getTransportType() === 'smtp' && ! ( $this->getSMTPInstance() instanceof PostmanNativeSmtp ) && $this->smtpPhaseStarted ) {
+                    if ( $this->smtpCallbackOutcome === 'accepted' ) {
+                        $this->transcript .= "\nSMTP DATA accepted before send failure; automatic replay held.";
+                    }
+                    // A caller-supplied SMTP implementation has no DATA observer.
+                    // Keep its identity/configuration; incomplete callbacks cannot
+                    // prove rejection, especially after RSET/QUIT or callback errors.
+                    $this->smtpDataEndUnknown = $this->smtpDataEndUnknown || $this->smtpCallbackOutcome !== 'not-sent';
+                }
                 if ( $this->options->getTransportType() === 'smtp' && $this->smtpDataEndUnknown ) {
                     $this->transcript .= "\nSMTP delivery outcome unknown.";
                 }
@@ -281,6 +305,59 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                 $this->smtpAttachmentBytes = null;
             }
 		}
+
+        public function smtpConnect( $options = null ) {
+            try {
+                $connected = parent::smtpConnect( $options );
+                if ( ! $connected && $this->smtpCallbackPhase ) { $this->smtpCallbackOutcome = 'not-sent'; }
+                return $connected;
+            } catch ( Exception $error ) {
+                // smtpConnect completes before MAIL/RCPT/DATA. Do not infer
+                // this phase from localized connection-error message text.
+                if ( $this->smtpCallbackPhase ) { $this->smtpCallbackOutcome = 'not-sent'; }
+                throw $error;
+            }
+        }
+
+        protected function smtpSend( $header, $body ) {
+            $this->smtpPhaseStarted = true;
+            $this->smtpCallbackPhase = true;
+            $this->smtpCallbackSeen = 0;
+            $this->smtpCallbackExpected = count( $this->all_recipients );
+            $this->smtpCallbackAccepted = false;
+            $this->smtpCallbackOutcome = '';
+            try {
+                return parent::smtpSend( $header, $body );
+            } catch ( Exception $error ) {
+                // Read definite pre-delivery rejection before postSend's keepalive
+                // cleanup can erase SMTP error state. RCPT errors alone do not
+                // prove no delivery: DATA may already have reached other RCPTs.
+                $smtp_error = $this->getSMTPInstance()->getError();
+                $code = isset( $smtp_error['smtp_code'] ) ? (int) $smtp_error['smtp_code'] : 0;
+                $command = isset( $smtp_error['error'] ) ? $smtp_error['error'] : '';
+                if ( ( $code >= 400 && $code < 600 && in_array( $command, array( 'MAIL FROM command failed', 'DATA command failed', 'DATA END command failed' ), true ) ) ) {
+                    $this->smtpCallbackOutcome = 'not-sent';
+                }
+                throw $error;
+            } finally {
+                // Pinned smtpSend calls these only after DATA succeeded or when
+                // every RCPT failed and DATA was skipped. Observe before user code.
+                if ( $this->smtpCallbackAccepted ) {
+                    $this->smtpCallbackOutcome = 'accepted';
+                } elseif ( $this->smtpCallbackExpected > 0 && $this->smtpCallbackSeen === $this->smtpCallbackExpected ) {
+                    $this->smtpCallbackOutcome = 'not-sent';
+                }
+                $this->smtpCallbackPhase = false;
+            }
+        }
+
+        protected function doCallback( $isSent, $to, $cc, $bcc, $subject, $body, $from, $extra ) {
+            if ( $this->smtpCallbackPhase ) {
+                ++$this->smtpCallbackSeen;
+                $this->smtpCallbackAccepted = $this->smtpCallbackAccepted || (bool) $isSent;
+            }
+            return parent::doCallback( $isSent, $to, $cc, $bcc, $subject, $body, $from, $extra );
+        }
 
         /** Match native attachAll hash/CID suppression before storing replay parts. */
         public function getEffectiveAttachments() {
