@@ -41,13 +41,13 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		 * @param mixed $attachments
 		 * @return boolean
 		 */
-		public function send( $to, $subject, $message, $headers = '', $attachments = array() ) {
+		public function send( $to, $subject, $message, $headers = '', $attachments = array(), $embeds = array(), $applyMailFilter = true ) {
 
 			// initialize for sending
 			$this->init();
 
 			// build the message
-			$postmanMessage = $this->processWpMailCall( $to, $subject, $message, $headers, $attachments );
+			$postmanMessage = $this->processWpMailCall( $to, $subject, $message, $headers, $attachments, $embeds, $applyMailFilter );
 
 			/*
 			 * Build the email log entry from the *final* message, after all wp_mail
@@ -175,7 +175,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		 * @param mixed $headers
 		 * @param mixed $attachments
 		 */
-		public function processWpMailCall( $to, $subject, $message, $headers, $attachments ) {
+		public function processWpMailCall( $to, $subject, $message, $headers, $attachments, $embeds = array(), $applyMailFilter = true ) {
 			$this->logger->trace( 'wp_mail parameters before applying WordPress wp_mail filter:' );
 			$this->traceParameters( $to, $subject, $message, $headers, $attachments );
 
@@ -188,7 +188,8 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 			 *        	A compacted array of wp_mail() arguments, including the "to" email,
 			 *        	subject, message, headers, and attachments values.
 			 */
-			$atts = apply_filters( 'wp_mail', compact( 'to', 'subject', 'message', 'headers', 'attachments' ) );
+			$atts = compact( 'to', 'subject', 'message', 'headers', 'attachments', 'embeds' );
+            if ( $applyMailFilter ) { $atts = apply_filters( 'wp_mail', $atts ); }
 
 			if ( isset( $atts ['to'] ) ) {
 				$to = $atts ['to'];
@@ -210,6 +211,8 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 				$attachments = $atts ['attachments'];
 			}
 
+            if ( isset( $atts['embeds'] ) ) { $embeds = $atts['embeds']; }
+
 			if ( ! is_array( $attachments ) ) {
 				$attachments = explode( "\n", str_replace( "\r\n", "\n", $attachments ) );
 			}
@@ -226,6 +229,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 			// create the message
 			$postmanMessage = $this->createNewMessage();
 			$this->populateMessageFromWpMailParams( $postmanMessage, $to, $subject, $message, $headers, $attachments );
+            $postmanMessage->setEmbeds( $embeds );
 
 			// return the message
 			return $postmanMessage;

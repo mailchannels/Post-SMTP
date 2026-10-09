@@ -501,26 +501,51 @@ if ( ! class_exists( 'PostmanMessage' ) ) {
 		 * @param Postman_Zend_Mail $mail
 		 */
 		public function addAttachmentsToMail( Postman_Zend_Mail $mail ) {
-			$attachments = $this->attachments;
-			if ( ! is_array( $attachments ) ) {
-				// WordPress may a single filename or a newline-delimited string list of multiple filenames
-				$attArray = explode( PHP_EOL, $attachments );
-			} else {
-				$attArray = $attachments;
-			}
-			// otherwise WordPress sends an array
-			foreach ( $attArray as $file ) {
-				if ( ! empty( $file ) ) {
-					$this->logger->debug( 'Adding attachment: ' . $file );
-					$at = new Postman_Zend_Mime_Part( file_get_contents( $file ) );
-					// $at->type = 'image/gif';
-					$at->disposition = Postman_Zend_Mime::DISPOSITION_ATTACHMENT;
-					$at->encoding = Postman_Zend_Mime::ENCODING_BASE64;
-					$at->filename = basename( $file );
-					$mail->addAttachment( $at );
-				}
-			}
-		}
+            foreach ( $this->getAttachmentParts() as $part ) {
+                $at = new Postman_Zend_Mime_Part( $part['data'] );
+                $at->type = $part['type'];
+                $at->disposition = $part['disposition'];
+                $at->encoding = $part['encoding'];
+                $at->filename = $part['filename'];
+                if ( $part['cid'] !== '' ) { $at->id = $part['cid']; }
+                $mail->addAttachment( $at );
+            }
+        }
+
+        public function setEmbeds( $embeds ) {
+            if ( empty( $embeds ) ) { return; }
+            if ( ! is_array( $embeds ) ) { throw new RuntimeException( 'Post SMTP embedded images must be an array.' ); }
+            foreach ( $embeds as $cid=>$path ) {
+                if ( ! is_string( $path ) ) { throw new RuntimeException( 'Post SMTP could not read an attachment.' ); }
+                $args = apply_filters( 'wp_mail_embed_args', array( 'path'=>$path, 'cid'=>(string) $cid, 'name'=>basename( $path ), 'encoding'=>'base64', 'type'=>'', 'disposition'=>'inline' ) );
+                $this->attachments[] = array( $args['path'], basename( $args['path'] ), $args['name'], $args['encoding'], $args['type'], false, $args['disposition'], $args['cid'] );
+            }
+        }
+
+        // Keep the public attachment representation for other providers; normalize
+        // local files and existing embedded-image tuples for API and Zend engines.
+        public function getAttachmentParts() {
+            $attachments = is_array( $this->attachments ) ? $this->attachments : preg_split( '/\r\n|\r|\n/', (string) $this->attachments );
+            $parts = array();
+            foreach ( $attachments as $alias=>$file ) {
+                if ( $file === '' ) { continue; }
+                $filename = is_string( $alias ) ? $alias : '';
+                $encoding = 'base64'; $type = ''; $disposition = 'attachment'; $cid = '';
+                if ( is_array( $file ) ) {
+                    if ( count( $file ) < 8 || ! empty( $file[5] ) ) { throw new RuntimeException( 'Post SMTP could not read an attachment.' ); }
+                    $filename = $file[2]; $encoding = $file[3]; $type = $file[4]; $disposition = $file[6]; $cid = $file[7]; $file = $file[0];
+                }
+                if ( ! is_string( $file ) || strpos( $file, '://' ) !== false || ! is_file( $file ) || ! is_readable( $file ) ) { throw new RuntimeException( 'Post SMTP could not read an attachment.' ); }
+                $data = file_get_contents( $file );
+                if ( $data === false ) { throw new RuntimeException( 'Post SMTP could not read an attachment.' ); }
+                if ( $filename === '' ) { $filename = basename( $file ); }
+                if ( ! is_string( $filename ) || ! is_string( $cid ) || preg_match( '/[\r\n]/', $filename . $cid ) || ! in_array( $disposition, array( 'attachment', 'inline' ), true ) || ! in_array( $encoding, array( 'base64', 'quoted-printable', '7bit', '8bit', 'binary' ), true ) ) { throw new RuntimeException( 'Post SMTP invalid attachment metadata.' ); }
+                if ( $type === '' ) { $detected = wp_check_filetype( $file ); $type = $detected['type'] ?: 'application/octet-stream'; }
+                $parts[] = array( 'filename'=>$filename, 'type'=>$type, 'data'=>$data, 'disposition'=>$disposition, 'encoding'=>$encoding, 'cid'=>$cid );
+            }
+            return $parts;
+        }
+
 		function setBody( $body ) {
 			$this->body = $body;
 		}

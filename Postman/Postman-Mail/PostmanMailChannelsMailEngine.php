@@ -132,30 +132,12 @@ class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 			// The SDK validates reserved headers; do not override structured fields.
 			$payload['headers'][$header['name']] = $header['content'];
 		}
-		$attachments = $message->getAttachments();
-		if ( ! is_array( $attachments ) ) {
-			$attachments = preg_split( '/\r\n|\r|\n/', (string) $attachments );
-		}
-		foreach ( $attachments as $file ) {
-			if ( $file === '' ) {
-				continue;
-			}
-			// wp_mail attachments are local files, never remote URLs or streams.
-			if ( ! is_string( $file ) || strpos( $file, '://' ) !== false || ! is_file( $file ) || ! is_readable( $file ) ) {
-				throw new RuntimeException( __( 'MailChannels could not read an attachment.', 'post-smtp' ) );
-			}
-			$data = file_get_contents( $file );
-			if ( $data === false ) {
-				throw new RuntimeException( __( 'MailChannels could not read an attachment.', 'post-smtp' ) );
-			}
-			$type = wp_check_filetype( $file );
-			$payload['attachments'][] = array(
-				'filename'    => basename( $file ),
-				'type'        => $type['type'] ?: 'application/octet-stream',
-				'content'     => base64_encode( $data ),
-				'disposition' => 'attachment',
-			);
-		}
+        foreach ( $message->getAttachmentParts() as $part ) {
+            $attachment = array( 'filename'=>$part['filename'], 'type'=>$part['type'], 'content'=>base64_encode( $part['data'] ), 'disposition'=>$part['disposition'] );
+            if ( $part['cid'] !== '' ) { $attachment['content_id'] = $part['cid']; }
+            $payload['attachments'][] = $attachment;
+        }
+
 		return $payload;
 	}
 
