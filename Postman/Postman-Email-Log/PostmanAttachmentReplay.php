@@ -18,7 +18,8 @@ class PostmanAttachmentReplay {
                 unset( $part['data'] );
             }
             unset( $part );
-            $manifest = array( 'version'=>1, 'parts'=>$parts );
+            $manifest = array( 'version'=>empty( $parts ) ? 1 : 2, 'parts'=>$parts );
+            if ( ! empty( $parts ) ) { $manifest['attachment_identity'] = 'ordinal-v1'; }
             if ( $has_bodies ) {
                 $text = $message->getBodyTextPart();
                 $html = $message->getBodyHtmlPart();
@@ -59,7 +60,9 @@ class PostmanAttachmentReplay {
             throw new RuntimeException( __( 'Attachment replay is unavailable for the selected mailer. Create a new message with the required attachments.', 'post-smtp' ) );
         }
         $manifest = json_decode( $snapshot, true );
-        if ( ! is_array( $manifest ) || ! isset( $manifest['version'], $manifest['parts'] ) || $manifest['version'] !== 1 || ! is_array( $manifest['parts'] ) || ! empty( $manifest['unavailable'] ) ) { throw new RuntimeException( self::holdMessage() ); }
+        if ( ! is_array( $manifest ) || ! isset( $manifest['version'], $manifest['parts'] ) || ! in_array( $manifest['version'], array( 1, 2 ), true ) || ! is_array( $manifest['parts'] ) || ! empty( $manifest['unavailable'] ) ) { throw new RuntimeException( self::holdMessage() ); }
+        $identity = $manifest['version'] === 2;
+        if ( $identity && ( ! isset( $manifest['attachment_identity'] ) || $manifest['attachment_identity'] !== 'ordinal-v1' ) ) { throw new RuntimeException( self::holdMessage() ); }
         if ( isset( $manifest['bodies'] ) ) {
             $saved = $manifest['bodies'];
             foreach ( array( 'charset', 'text', 'html', 'text_sha256', 'html_sha256' ) as $field ) {
@@ -81,7 +84,7 @@ class PostmanAttachmentReplay {
             $data = base64_decode( $part['content'], true );
             if ( $data === false || ! hash_equals( $part['sha256'], hash( 'sha256', $data ) ) || preg_match( '/[\r\n]/', $part['filename'] . $part['type'] . $part['cid'] ) || ! in_array( $part['disposition'], array( 'inline', 'attachment' ), true ) || ! in_array( $part['encoding'], array( 'base64', 'quoted-printable', '7bit', '8bit', 'binary' ), true ) ) { throw new RuntimeException( self::holdMessage() ); }
             // Existing embedded tuple, with string data instead of a local pathname.
-            $attachments[] = array( $data, $part['filename'], $part['filename'], $part['encoding'], $part['type'], true, $part['disposition'], $part['cid'] );
+            $attachments[] = array( $data, $identity ? 'post-smtp-snapshot:' . count( $attachments ) : $part['filename'], $part['filename'], $part['encoding'], $part['type'], true, $part['disposition'], $part['cid'] );
         }
         return $attachments;
     }
@@ -133,6 +136,12 @@ class PostmanAttachmentReplay {
             }
             foreach ( $tuples as $part ) {
                 if ( count( $part ) < 8 ) { throw new RuntimeException( PostmanAttachmentReplay::holdMessage() ); }
+                if ( strpos( $part[1], 'post-smtp-snapshot:' ) === 0 ) {
+                    if ( ! ( $mailer instanceof PostsmtpMailer ) || ! $mailer->addSnapshotAttachment( $part ) ) {
+                        throw new RuntimeException( PostmanAttachmentReplay::holdMessage() );
+                    }
+                    continue;
+                }
                 if ( $part[6] === 'inline' ) {
                     $method = $part[5] ? 'addStringEmbeddedImage' : 'addEmbeddedImage';
                     $ok = $mailer->$method( $part[0], $part[7], $part[2], $part[3], $part[4], $part[6] );

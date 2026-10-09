@@ -282,10 +282,46 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
             }
 		}
 
+        /** Match native attachAll hash/CID suppression before storing replay parts. */
+        public function getSmtpReplayAttachments() {
+            $parts = array();
+            $included = array();
+            $cids = array();
+            foreach ( $this->getAttachments() as $part ) {
+                $group = $part[6];
+                $hash = hash( 'sha256', serialize( $part ) );
+                if ( isset( $included[$group][$hash] ) ) { continue; }
+                $included[$group][$hash] = true;
+                if ( $group === 'inline' && isset( $cids[$part[7]] ) ) { continue; }
+                if ( $group === 'inline' ) { $cids[$part[7]] = true; }
+                $parts[] = $part;
+            }
+            return $parts;
+        }
+
+        /** Preserve snapshot part count without changing public MIME filenames. */
+        public function addSnapshotAttachment( $part ) {
+            if ( count( $part ) !== 8 || ! $part[5] || strpos( $part[1], 'post-smtp-snapshot:' ) !== 0 ) {
+                throw new phpmailerException( 'Post SMTP invalid snapshot attachment identity.' );
+            }
+            $index = count( $this->attachment );
+            if ( $part[6] === 'inline' ) {
+                $ok = $this->addStringEmbeddedImage( $part[0], $part[7], $part[2], $part[3], $part[4], $part[6] );
+            } else {
+                $ok = $this->addStringAttachment( $part[0], $part[2], $part[3], $part[4], $part[6] );
+            }
+            if ( $ok ) {
+                // Tuple[1] participates in PHPMailer's hash but is not a MIME
+                // filename. Snapshot ordinals retain distinct identical parts.
+                $this->attachment[$index][1] = $part[1];
+            }
+            return $ok;
+        }
+
         /** Read file attachments once without changing native tuples or deduplication. */
         private function freezeSmtpAttachments() {
             $bytes = array();
-            $attachments = $this->getAttachments();
+            $attachments = $this->getSmtpReplayAttachments();
             foreach ( $attachments as &$part ) {
                 if ( ! $part[5] ) {
                     $path = $part[0];
