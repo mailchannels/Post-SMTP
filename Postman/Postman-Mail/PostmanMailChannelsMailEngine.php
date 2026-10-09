@@ -7,6 +7,17 @@
 
 defined( 'ABSPATH' ) || exit;
 
+class PostmanMailChannelsDeliveryException extends RuntimeException {
+	private $uncertain;
+	public function __construct( $message, $code, $uncertain ) {
+		parent::__construct( $message, $code );
+		$this->uncertain = $uncertain;
+	}
+	public function isDeliveryUncertain() {
+		return $this->uncertain;
+	}
+}
+
 class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 	private $apiKey;
 	private $client;
@@ -47,11 +58,14 @@ class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 
 	public function send( PostmanMessage $message ) {
 		$this->transcript = '';
+		$uncertain = false;
 		try {
 			if ( ! $this->client ) {
 				$this->client = $this->createClient();
 			}
-			$response = $this->client->emails->send( $this->createPayload( $message ) );
+			$payload = $this->createPayload( $message );
+			$uncertain = true; // Once submission starts, absence of acceptance is not rejection.
+			$response = $this->client->emails->send( $payload );
 			$this->transcript = sprintf( 'MailChannels HTTP %d; request ID: %s', $response->statusCode, $response->requestId() );
 			// A 202 can contain a failed personalization. Never log that as sent.
 			if ( $response->statusCode !== 202 || count( (array) $response->results ) !== 1 ) {
@@ -59,21 +73,30 @@ class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 			}
 			$result = $response->results[0];
 			if ( $result->status !== 'sent' ) {
+				$uncertain = $result->status !== 'failed';
 				throw new RuntimeException( 'MailChannels: ' . ( $result->reason ?: __( 'The message was not accepted.', 'post-smtp' ) ) );
 			}
 			$this->transcript .= sprintf( '; message ID: %s; accepted for delivery.', $result->messageId );
 		} catch ( Throwable $exception ) {
 			$details = $exception->getMessage();
+			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ValidationException ) {
+				$uncertain = false; // SDK validation precedes transport submission.
+			}
 			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\MailChannelsException ) {
+				$status = $exception->getStatusCode();
+				if ( $status >= 400 && $status < 500 && $status !== 408 ) {
+					$uncertain = false; // Explicit API rejection; 408 remains ambiguous.
+				}
 				$details .= sprintf( ' (HTTP %s; request ID: %s)', $exception->getStatusCode(), $exception->getRequestId() );
 				if ( $exception->getRetryAfter() !== null ) {
 					$details .= '; Retry-After: ' . $exception->getRetryAfter();
 				}
 			}
 			// Do not retain credentials, message bodies or attachment data in transcripts.
-			$details = $this->redact( $details );
+			$marker = $uncertain ? PostmanMailChannelsTransport::OUTCOME_UNKNOWN : PostmanMailChannelsTransport::OUTCOME_REJECTED;
+			$details = $marker . ' ' . $this->redact( $details );
 			$this->transcript = $this->redact( $this->transcript . "\n" . $details );
-			throw new RuntimeException( $details, (int) $exception->getCode() );
+			throw new PostmanMailChannelsDeliveryException( $details, (int) $exception->getCode(), $uncertain );
 		}
 	}
 

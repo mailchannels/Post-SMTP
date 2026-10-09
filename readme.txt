@@ -305,6 +305,8 @@ Select MailChannels in the setup wizard or the Account settings and enter a Mail
 
 The integration uses the official MailChannels PHP SDK and supports To, Cc, Bcc, Reply-To, text and HTML bodies, custom headers, and local file attachments. MailChannels manages delivery and the envelope sender. Set up DKIM in your MailChannels account. A successful test means MailChannels accepted the message, not that it reached the recipient's inbox.
 
+A timeout, HTTP 408/server error, or invalid acceptance response can leave delivery uncertain. Post SMTP holds automatic fallback and both email-log resend routes for these outcomes, because MailChannels may already have accepted the message. Verify acceptance with MailChannels before creating a new send. Older failed MailChannels logs without a confirmed rejection are also held. Confirmed API rejections and local validation failures retain normal fallback/resend behavior. This does not prevent a calling plugin from invoking `wp_mail` again as a new request.
+
 When selected, this mailer sends email addresses, message content, headers, and attachments to [MailChannels](https://www.mailchannels.com/email-api/) for delivery. See the [MailChannels privacy policy](https://www.mailchannels.com/privacy-policy/). No MailChannels requests are made just by opening settings.
 
 = What is OAuth 2.0? =

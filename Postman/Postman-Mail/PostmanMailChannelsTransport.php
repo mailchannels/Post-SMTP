@@ -11,11 +11,29 @@ defined( 'ABSPATH' ) || exit;
 if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 	class PostmanMailChannelsTransport extends PostmanAbstractModuleTransport implements PostmanModuleTransport {
 		const SLUG = 'mailchannels_api';
+		const OUTCOME_UNKNOWN = 'MailChannels delivery outcome unknown.';
+		const OUTCOME_REJECTED = 'MailChannels delivery not accepted.';
+
 		const PORT = 0;
 		const HOST = 'api.mailchannels.net';
 		const PRIORITY = 49000;
 		const MAILCHANNELS_AUTH_OPTIONS = 'postman_mailchannels_auth_options';
 		const MAILCHANNELS_AUTH_SECTION = 'postman_mailchannels_auth_section';
+
+		public static function canResendLog( $uri, $transcript, $success ) {
+			if ( strpos( (string) $uri, self::HOST ) === false ) {
+				return true;
+			}
+			if ( strpos( (string) $transcript, self::OUTCOME_UNKNOWN ) !== false ) {
+				return false;
+			}
+			// Older failed logs have no reliable rejection evidence: hold them as well.
+			return (string) $success === '1' || strpos( (string) $transcript, self::OUTCOME_REJECTED ) !== false;
+		}
+
+		public static function resendHoldMessage() {
+			return __( 'MailChannels delivery outcome is unknown. Verify provider acceptance before creating a new send; this log cannot be resent automatically.', 'post-smtp' );
+		}
 
 		public function __construct( $params ) {
 			parent::__construct( $params );
