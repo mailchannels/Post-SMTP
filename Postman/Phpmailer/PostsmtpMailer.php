@@ -123,6 +123,20 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 			$postmanWpMail = new PostmanWpMail();
 			$postmanWpMail->init();
 
+            if ( $this->options->getTransportType() === 'mailchannels_api' ) {
+                $this->error = null;
+                try {
+                    if ( $this->sign_key_file !== '' ) { throw new phpmailerException( 'MailChannels cannot preserve PHPMailer S/MIME signing.' ); }
+                    return $postmanWpMail->sendPhpMailer( $this );
+                }
+                catch ( Exception $error ) {
+                    $this->error = $error;
+                    $this->setError( $error->getMessage() );
+                    if ( $this->exceptions ) { throw $error; }
+                    return false;
+                }
+            }
+
 			list( $to, $subject, $body, $headers, $attachments ) = array_pad( $this->mail_args, 5, null );
 
 			// build the message

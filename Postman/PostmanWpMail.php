@@ -67,6 +67,55 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 			return $this->sendMessage( $postmanMessage, $log );
 		}
 
+        /** Core has already filtered and initialized this PHPMailer message. */
+        public function sendPhpMailer( $mailer ) {
+            $this->init();
+            add_filter( 'postman_wp_mail_result', array( $this, 'postman_wp_mail_result' ) );
+            if ( ! in_array( $mailer->ContentType, array( 'text/plain', 'text/html' ), true ) || count( $mailer->getReplyToAddresses() ) > 1 ) {
+                throw new phpmailerException( 'MailChannels cannot preserve this PHPMailer content type or multiple Reply-To addresses.' );
+            }
+            if ( $mailer->DKIM_domain !== '' || $mailer->Ical !== '' || ( $mailer->Sender !== '' && $mailer->Sender !== $mailer->From ) ) {
+                throw new phpmailerException( 'MailChannels cannot preserve PHPMailer signing, calendar or a separate envelope sender.' );
+            }
+            $message = new PostmanMessage();
+            $message->setFrom( $mailer->From, $mailer->FromName );
+            foreach ( array( 'addTo'=>'getToAddresses', 'addCc'=>'getCcAddresses', 'addBcc'=>'getBccAddresses' ) as $add => $get ) {
+                foreach ( $mailer->$get() as $address ) {
+                    $message->$add( array( ( new PostmanEmailAddress( $address[0], $address[1] ) )->format() ) );
+                }
+            }
+            foreach ( $mailer->getReplyToAddresses() as $address ) {
+                $message->setReplyTo( ( new PostmanEmailAddress( $address[0], $address[1] ) )->format() );
+            }
+            $message->setSubject( $mailer->Subject );
+            $message->setCharset( $mailer->CharSet );
+            $message->setContentType( $mailer->ContentType );
+            $message->setBody( $mailer->Body );
+            if ( $mailer->ContentType === 'text/html' || $mailer->AltBody !== '' ) {
+                $message->setBodyHtmlPart( $mailer->Body );
+                if ( $mailer->AltBody !== '' ) { $message->setBodyTextPart( $mailer->AltBody ); }
+            } else { $message->setBodyTextPart( $mailer->Body ); }
+            $attachments = $mailer->getAttachments();
+            foreach ( $attachments as &$attachment ) {
+                if ( $attachment[6] === 'attachment' && $attachment[7] === 0 ) { $attachment[7] = ''; }
+            }
+            unset( $attachment );
+            $message->setAttachments( $attachments );
+            foreach ( $mailer->getCustomHeaders() as $header ) { $message->addHeaders( array( $header[0] . ': ' . $header[1] ) ); }
+            $log = new PostmanEmailLog();
+            $log->originalTo = $this->format_recipients_for_log( $message->getToRecipients() );
+            $log->originalSubject = $message->getSubject();
+            $log->originalMessage = $message->getBody();
+            $headers = array( $this->flatten_headers_for_log( $message ), 'From: ' . $message->getFromAddress()->format() );
+            foreach ( array( 'Cc'=>'getCcRecipients', 'Bcc'=>'getBccRecipients' ) as $name => $get ) {
+                $value = $this->format_recipients_for_log( $message->$get() );
+                if ( $value !== '' ) { $headers[] = $name . ': ' . $value; }
+            }
+            $log->originalHeaders = implode( "\r\n", $headers );
+            // Keep plugin forced-sender/recipient policy; core owns WordPress hooks.
+            return $this->sendMessage( $message, $log, false );
+        }
+
 		/**
 		 * Convert PostmanEmailAddress recipients to a string suitable for logging
 		 * and for passing back into wp_mail() when resending.
@@ -269,7 +318,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		 * @param PostmanMessage $message
 		 * @return boolean
 		 */
-		public function sendMessage( PostmanMessage $message, PostmanEmailLog $log ) {
+		public function sendMessage( PostmanMessage $message, PostmanEmailLog $log, $applyWordPressFilters = true ) {
 
 			$this->apply_default_headers( $message );
 
@@ -301,7 +350,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 
 			// apply the WordPress filters
 			// may impact the from address, from email, charset and content-type
-			$message->applyFilters();
+			$message->applyFilters( $applyWordPressFilters );
 
 			// create the body parts (if they are both missing)
 			if ( $message->isBodyPartsEmpty() ) {
@@ -415,7 +464,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 				);
 				$mail_error_data['phpmailer_exception_code'] = $e->getCode();
 
-				do_action( 'wp_mail_failed', new WP_Error( 'wp_mail_failed', $e->getMessage(), $mail_error_data ) );
+                if ( $applyWordPressFilters ) { do_action( 'wp_mail_failed', new WP_Error( 'wp_mail_failed', $e->getMessage(), $mail_error_data ) ); }
 
 				// return failure
 				if ( PostmanOptions::getInstance()->getSmtpMailer() == 'phpmailer' ) {

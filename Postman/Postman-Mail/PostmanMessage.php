@@ -153,7 +153,7 @@ if ( ! class_exists( 'PostmanMessage' ) ) {
 		/**
 		 * Apply the WordPress filters to the email
 		 */
-		public function applyFilters() {
+		public function applyFilters( $applyWordPressFilters = true ) {
 			if ( $this->logger->isDebug() ) {
 				$this->logger->debug( 'Applying WordPress filters' );
 			}
@@ -166,6 +166,7 @@ if ( ! class_exists( 'PostmanMessage' ) ) {
 			 * @param string $from_email
 			 *        	Email address to send from.
 			 */
+            if ( $applyWordPressFilters ) {
 			$filteredEmail = apply_filters( 'wp_mail_from', $this->getFromAddress()->getEmail() );
 			if ( $this->logger->isTrace() ) {
 				$this->logger->trace( 'wp_mail_from: ' . $filteredEmail );
@@ -225,6 +226,8 @@ if ( ! class_exists( 'PostmanMessage' ) ) {
 				$this->logger->debug( sprintf( 'Filtering Content-Type: before=%s after=%s', $this->getContentType(), $filteredContentType ) );
 				$this->setContentType( $filteredContentType );
 			}
+
+            }
 
 			// Postman has it's own 'user override' filter
 			$options = PostmanOptions::getInstance();
