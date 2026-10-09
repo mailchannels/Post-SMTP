@@ -45,7 +45,7 @@ class PostmanEmailQueryLog {
          */
         $args = apply_filters( 'post_smtp_get_logs_args', $args );
 
-        $clause_for_date = empty( $args['search'] ) ? $this->query .= " WHERE" : $this->query .= " AND";
+        $clause_for_date = empty( $args['search'] ) ? " WHERE" : " AND";
 
         $args['search_by'] = array(
             'original_subject',
@@ -87,7 +87,7 @@ class PostmanEmailQueryLog {
          */
         $this->columns = apply_filters( 'post_smtp_get_logs_query_cols', $this->columns, $args );
 
-        $this->query = $this->db->prepare(
+        $this->query = PostmanUtils::prepareQueryWithTable(
             "SELECT {$this->columns} FROM %i AS pl",
             $this->table
         );
@@ -105,7 +105,7 @@ class PostmanEmailQueryLog {
         //Search
         if( !empty( $args['search'] ) ) {
 
-            $this->query .= " WHERE";
+            $this->query .= " WHERE (";
             $counter = 1;
 
             foreach( $args['search_by'] as $key ) {
@@ -118,6 +118,7 @@ class PostmanEmailQueryLog {
                 $counter++;
 
             }
+            $this->query .= ")";
 
         }
 
@@ -219,7 +220,7 @@ class PostmanEmailQueryLog {
         $query = str_replace( $this->columns, 'COUNT(*) as count', $this->query );
 
         //Remove LIMIT clouse to use COUNT clouse properly 
-        $query = substr( $query, 0, strpos( $query, "LIMIT" ) );
+        $query = preg_replace( '/\s+LIMIT\s+\d+\s*,\s*\d+\s*$/i', '', $query );
 
         return $this->db->get_results( $query );
 
@@ -236,7 +237,7 @@ class PostmanEmailQueryLog {
     public function get_total_row_count() {
 
         return $this->db->get_results(
-            $this->db->prepare(
+            PostmanUtils::prepareQueryWithTable(
                 "SELECT COUNT(*) as count FROM %i;",
                 $this->table
             )
@@ -254,7 +255,7 @@ class PostmanEmailQueryLog {
     public function get_last_log_id() {
 
         $result = $this->db->get_results(
-            $this->db->prepare(
+            PostmanUtils::prepareQueryWithTable(
                 "SELECT id FROM %i ORDER BY id DESC LIMIT 1;",
                 $this->table
             )
@@ -274,19 +275,22 @@ class PostmanEmailQueryLog {
      */
     public function delete_logs( $ids = array() ) {
 		
-		$ids = implode( ',', $ids );	
+		if ( empty( $ids ) ) {
+			return 0;
+		}
+		$ids = implode( ',', array_map( 'intval', $ids ) );
 		$ids_log = $ids == -1 ? '' : "WHERE id IN ({$ids});";
 		$ids_meta_logs = $ids == -1 ? '' : "WHERE log_id IN ({$ids});";
 
 		$this->db->query( 
-			$this->db->prepare(
+			PostmanUtils::prepareQueryWithTable(
 			   "DELETE FROM %i {$ids_meta_logs}",
 				$this->meta_table
 			)
 		);
 		
         return $this->db->query(
-            $this->db->prepare(
+            PostmanUtils::prepareQueryWithTable(
                 "DELETE FROM %i {$ids_log}",
                 $this->table
             )
@@ -303,11 +307,14 @@ class PostmanEmailQueryLog {
      */
     public function get_all_logs( $ids = array() ) {
 
-        $ids = implode( ',', $ids );
+        if ( empty( $ids ) ) {
+            return array();
+        }
+        $ids = implode( ',', array_map( 'intval', $ids ) );
         $ids = $ids == -1 ? '' : "WHERE id IN ({$ids});";
 
         return $this->db->get_results(
-            $this->db->prepare(
+            PostmanUtils::prepareQueryWithTable(
                 "SELECT * FROM %i {$ids}",
                 $this->table
             )
@@ -353,14 +360,7 @@ class PostmanEmailQueryLog {
 			$columns_sql  = ! empty( $safe_columns ) ? implode( ', ', array_map( 'esc_sql', $safe_columns ) ) : '*';
 		}
 
-		// %i requires WordPress 6.2; older supported versions still need log lookup.
-		if ( $this->db->has_cap( 'identifier_placeholders' ) ) {
-			$query = $this->db->prepare( "SELECT {$columns_sql} FROM %i WHERE id = %d", $this->table, $id );
-		} else {
-			// Quote the identifier, and protect literal % from prepare's placeholder parser.
-			$table = '`' . str_replace( array( '`', '%' ), array( '``', '%%' ), $this->table ) . '`';
-			$query = $this->db->prepare( "SELECT {$columns_sql} FROM {$table} WHERE id = %d", $id );
-		}
+		$query = PostmanUtils::prepareQueryWithTable( "SELECT {$columns_sql} FROM %i WHERE id = %d", $this->table, array( $id ) );
 
 		return $this->db->get_row( $query, ARRAY_A );
 	}

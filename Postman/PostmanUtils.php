@@ -27,6 +27,21 @@ class PostmanUtils {
 
 		const NO_ECHO = false;
 
+	/** Prepare one table identifier and optional value placeholders on all supported WP versions. */
+	public static function prepareQueryWithTable( $query, $table, $values = array() ) {
+		global $wpdb;
+		if ( $wpdb->has_cap( 'identifier_placeholders' ) ) {
+			return $wpdb->prepare( $query, array_merge( array( $table ), $values ) );
+		}
+		$table = '`' . str_replace( '`', '``', $table ) . '`';
+		if ( empty( $values ) ) {
+			return str_replace( '%i', $table, $query );
+		}
+		// Escape literal percent signs only when the completed query is prepared again.
+		$query = str_replace( '%i', str_replace( '%', '%%', $table ), $query );
+		return $wpdb->prepare( $query, $values );
+	}
+
 	/**
 	 * Initialize the Logger
 	 */

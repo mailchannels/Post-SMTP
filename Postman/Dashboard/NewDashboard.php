@@ -99,7 +99,7 @@ if ( ! class_exists( 'Post_SMTP_New_Dashboard' ) ) {
 
             global $wpdb;
             $sql = 'SELECT COUNT( * ) FROM %i WHERE event_type = "open-email" AND time <= %d AND time >= %d';
-            $sql = $wpdb->prepare( $sql, $wpdb->prefix . 'post_smtp_tracking', $current_time, $filter );
+            $sql = PostmanUtils::prepareQueryWithTable( $sql, $wpdb->prefix . 'post_smtp_tracking', array( $current_time, $filter ) );
 
             return $wpdb->get_var( $sql );
         }
