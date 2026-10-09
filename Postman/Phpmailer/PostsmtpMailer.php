@@ -77,6 +77,11 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 		}
 
 		public function get_mail_args( $atts ) {
+            // Start each MailChannels wp_mail call with fresh alternative content.
+            // Older core versions retain AltBody on the shared PHPMailer.
+            if ( $this->options->getTransportType() === 'mailchannels_api' ) {
+                $this->AltBody = '';
+            }
 			$this->mail_args = array();
 			$this->mail_args[] = @$atts['to'];
 			$this->mail_args[] = @$atts['subject'];
