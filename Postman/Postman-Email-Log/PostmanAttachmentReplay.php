@@ -92,14 +92,38 @@ class PostmanAttachmentReplay {
         if ( basename( $function->getFileName() ) === 'PostmanWpMailBinder.php' ) {
             return wp_mail( $to, $subject, $message, $headers, $attachments, array(), $bodies );
         }
+        // Core wp_mail shares one mutable global mailer. A nested call would
+        // overwrite outer recipients and inherit this private replay snapshot.
+        $depth = self::wpMailDepth() + 1;
+        $preempt = static function ( $result ) use ( $depth ) {
+            return PostmanAttachmentReplay::wpMailDepth() > $depth ? false : $result;
+        };
+        // Core before 5.7 has no pre_wp_mail short circuit. Throw before it
+        // touches the shared object rather than silently sending replay bytes.
+        $legacy_guard = static function ( $atts ) use ( $depth ) {
+            if ( PostmanAttachmentReplay::wpMailDepth() > $depth ) {
+                throw new RuntimeException( 'Post SMTP cannot send nested mail during an immutable log replay.' );
+            }
+            return $atts;
+        };
+        $legacy_core = version_compare( get_bloginfo( 'version' ), '5.7', '<' );
         $paths = array();
         $tuples = array();
         foreach ( (array) $attachments as $attachment ) {
             if ( is_array( $attachment ) ) { $tuples[] = $attachment; }
             else { $paths[] = $attachment; }
         }
-        $hook = static function ( $mailer ) use ( $tuples, $bodies ) {
-            // Core reuses the object without clearing AltBody. Never replay stale content.
+        $poisoned = false;
+        $replay_mailer = null;
+        $hook = static function ( $mailer ) use ( $tuples, $bodies, $depth, &$poisoned, &$replay_mailer ) {
+            // A later filter must not override nested preemption and allow a
+            // partial outer send after the nested call corrupts shared state.
+            if ( $poisoned || PostmanAttachmentReplay::wpMailDepth() !== $depth ) {
+                $poisoned = true;
+                throw new RuntimeException( 'Post SMTP cannot send nested mail during an immutable log replay.' );
+            }
+            $replay_mailer = $mailer;
+            // Restore only this snapshot, regardless of earlier hook body changes.
             $mailer->AltBody = '';
             if ( $bodies !== null ) {
                 $mailer->isHTML( true );
@@ -119,9 +143,26 @@ class PostmanAttachmentReplay {
                 if ( ! $ok ) { throw new RuntimeException( PostmanAttachmentReplay::holdMessage() ); }
             }
         };
+        if ( $legacy_core ) { add_filter( 'wp_mail', $legacy_guard, PHP_INT_MIN ); }
+        else { add_filter( 'pre_wp_mail', $preempt, PHP_INT_MAX ); }
         add_action( 'phpmailer_init', $hook, PHP_INT_MAX );
         try { return wp_mail( $to, $subject, $message, $headers, $paths ); }
-        finally { remove_action( 'phpmailer_init', $hook, PHP_INT_MAX ); }
+        finally {
+            // Clear the temporary alternative body when the replay scope ends.
+            if ( $replay_mailer !== null ) { $replay_mailer->AltBody = ''; }
+            remove_action( 'phpmailer_init', $hook, PHP_INT_MAX );
+            if ( $legacy_core ) { remove_filter( 'wp_mail', $legacy_guard, PHP_INT_MIN ); }
+            else { remove_filter( 'pre_wp_mail', $preempt, PHP_INT_MAX ); }
+        }
+    }
+
+    private static function wpMailDepth() {
+        $depth = 0;
+        // Omit arguments: snapshots and message content must not enter traces.
+        foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame ) {
+            if ( $frame['function'] === 'wp_mail' && ! isset( $frame['class'] ) ) { ++$depth; }
+        }
+        return $depth;
     }
 
     public static function holdMessage() {
