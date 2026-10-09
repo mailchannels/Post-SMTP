@@ -358,12 +358,20 @@ class PostmanEmailLogsMigration {
 
                             $this->log( 'Info: `migrate_logs` Remove extra keys if contains: ' . print_r( array_keys( $log ), true ) );
 
+                            // Snapshot bytes are private metadata, never an ordinary log column.
+                            $snapshot = isset( $log[PostmanAttachmentReplay::KEY] ) ? $log[PostmanAttachmentReplay::KEY] : null;
                             $log = $this->remove_extra_keys( $log );
 
                             $this->log( 'Info: `migrate_logs` Migrating Log: ' . print_r( array_keys( $log ), true ) );
                 
                             $result = PostmanEmailLogs::get_instance()->save( $log );
             
+                            if ( $result && ! PostmanAttachmentReplay::save( $result, $snapshot ) ) {
+                                // Keep the source eligible for retry; remove the incomplete copy.
+                                ( new PostmanEmailQueryLog() )->delete_logs( array( $result ) );
+                                $result = false;
+                            }
+
                             if( $result ) {
 
                                 $this->log( 'Info: `migrate_logs` Log migrated' );

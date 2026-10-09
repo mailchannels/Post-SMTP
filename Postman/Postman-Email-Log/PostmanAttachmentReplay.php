@@ -24,12 +24,15 @@ class PostmanAttachmentReplay {
     }
 
     public static function save( $id, $snapshot, $legacy = false ) {
-        if ( $snapshot === null ) { return; }
-        if ( $legacy ) { update_post_meta( $id, self::KEY, wp_slash( $snapshot ) ); return; }
+        if ( $snapshot === null ) { return true; }
+        if ( $legacy ) {
+            update_post_meta( $id, self::KEY, wp_slash( $snapshot ) );
+            return get_post_meta( $id, self::KEY, true ) === $snapshot;
+        }
         global $wpdb;
         $table = $wpdb->prefix . 'post_smtp_logmeta';
         $wpdb->delete( $table, array( 'log_id'=>$id, 'meta_key'=>self::KEY ) );
-        $wpdb->insert( $table, array( 'log_id'=>$id, 'meta_key'=>self::KEY, 'meta_value'=>$snapshot ) );
+        return $wpdb->insert( $table, array( 'log_id'=>$id, 'meta_key'=>self::KEY, 'meta_value'=>$snapshot ) ) !== false;
     }
 
     public static function restore( $id, $transcript, $legacy = false ) {
