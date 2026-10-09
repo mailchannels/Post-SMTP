@@ -34,6 +34,37 @@ if ( version_compare( get_bloginfo( 'version' ), '5.5-alpha', '<' ) ) {
 }
 
 
+// Observe DATA before PHPMailer runs RSET/QUIT or per-recipient callbacks.
+// A recipients_failed exception may follow successful delivery to other RCPTs.
+if ( ! class_exists( 'PostmanNativeSmtp', false ) && class_exists( 'SMTP', false ) ) {
+    class PostmanNativeSmtp extends SMTP {
+        private $postmanDataOutcome = '';
+
+        public function resetPostmanDataOutcome() {
+            $this->postmanDataOutcome = '';
+        }
+
+        public function getPostmanDataOutcome() {
+            return $this->postmanDataOutcome;
+        }
+
+        public function data( $msg_data ) {
+            $accepted = parent::data( $msg_data );
+            if ( $accepted ) {
+                $this->postmanDataOutcome = 'accepted';
+            } else {
+                $error = $this->getError();
+                $code = isset( $error['smtp_code'] ) ? (int) $error['smtp_code'] : 0;
+                if ( isset( $error['error'] ) && $error['error'] === 'DATA END command failed' && ( $code < 400 || $code >= 600 ) ) {
+                    $this->postmanDataOutcome = 'unknown';
+                }
+            }
+            return $accepted;
+        }
+    }
+}
+
+
 add_action( 'plugins_loaded', function() {
 	global $phpmailer;
 
@@ -62,6 +93,14 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 			$this->set_vars();
 			$this->hooks();
 		}
+
+        public function getSMTPInstance() {
+            // Preserve caller-supplied SMTP subclasses and all configuration.
+            if ( ! is_object( $this->smtp ) ) {
+                $this->smtp = new PostmanNativeSmtp();
+            }
+            return $this->smtp;
+        }
 
 		public function set_vars() {
 			$this->options = PostmanOptions::getInstance();
@@ -157,6 +196,8 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                 $this->error = null;
                 $this->transcript = '';
                 $this->smtpDataEndUnknown = false;
+                $smtp = $this->getSMTPInstance();
+                if ( $smtp instanceof PostmanNativeSmtp ) { $smtp->resetPostmanDataOutcome(); }
                 $this->ErrorInfo = '';
                 list( $postmanMessage, $log ) = $postmanWpMail->createPhpMailerLog( $this );
                 // Preserve original native SMTP delivery, but do not offer a
@@ -205,6 +246,15 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                         $code = isset( $smtp_error['smtp_code'] ) ? (int) $smtp_error['smtp_code'] : 0;
                         $this->smtpDataEndUnknown = $code < 400 || $code >= 600;
                     }
+                }
+                if ( $this->options->getTransportType() === 'smtp' && $this->getSMTPInstance() instanceof PostmanNativeSmtp ) {
+                    $outcome = $this->getSMTPInstance()->getPostmanDataOutcome();
+                    if ( $outcome === 'accepted' ) {
+                        // The message reached at least one recipient. Holding the
+                        // whole replay avoids sending it to that recipient again.
+                        $this->transcript .= "\nSMTP DATA accepted before send failure; automatic replay held.";
+                    }
+                    $this->smtpDataEndUnknown = $this->smtpDataEndUnknown || $outcome === 'accepted' || $outcome === 'unknown';
                 }
                 if ( $this->options->getTransportType() === 'smtp' && $this->smtpDataEndUnknown ) {
                     $this->transcript .= "\nSMTP delivery outcome unknown.";
