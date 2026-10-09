@@ -122,7 +122,8 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
                 $attachments = method_exists( $mailer, 'getEffectiveAttachments' ) ? $mailer->getEffectiveAttachments() : $mailer->getAttachments();
             }
             foreach ( $attachments as &$attachment ) {
-                if ( $attachment[6] === 'attachment' && $attachment[7] === 0 ) { $attachment[7] = ''; }
+                // Tuple[7] is a filename for ordinary files, not a MIME CID.
+                if ( $attachment[6] === 'attachment' ) { $attachment[7] = ''; }
             }
             unset( $attachment );
             $message->setAttachments( $attachments );
