@@ -353,15 +353,14 @@ class PostmanEmailQueryLog {
 			$columns_sql  = ! empty( $safe_columns ) ? implode( ', ', array_map( 'esc_sql', $safe_columns ) ) : '*';
 		}
 
-		// Sanitize table name.
-		$table = esc_sql( $this->table );
-
-		// Prepare and execute the query securely.
-		$query = $this->db->prepare(
-			"SELECT {$columns_sql} FROM %i WHERE id = %d",
-            $table,
-			$id
-		);
+		// %i requires WordPress 6.2; older supported versions still need log lookup.
+		if ( $this->db->has_cap( 'identifier_placeholders' ) ) {
+			$query = $this->db->prepare( "SELECT {$columns_sql} FROM %i WHERE id = %d", $this->table, $id );
+		} else {
+			// Quote the identifier, and protect literal % from prepare's placeholder parser.
+			$table = '`' . str_replace( array( '`', '%' ), array( '``', '%%' ), $this->table ) . '`';
+			$query = $this->db->prepare( "SELECT {$columns_sql} FROM {$table} WHERE id = %d", $id );
+		}
 
 		return $this->db->get_row( $query, ARRAY_A );
 	}
