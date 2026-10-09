@@ -42,6 +42,10 @@ class PostmanAttachmentReplay {
             if ( strpos( (string) $transcript, self::REQUIRED ) !== false ) { throw new RuntimeException( self::holdMessage() ); }
             return array(); // Older logs have no reliable attachment history.
         }
+        $transport = PostmanTransportRegistry::getInstance()->getCurrentTransport();
+        if ( ! ( $transport instanceof PostmanMailChannelsTransport ) && ! ( $transport instanceof PostmanSmtpModuleTransport ) ) {
+            throw new RuntimeException( __( 'Attachment replay is unavailable for the selected mailer. Create a new message with the required attachments.', 'post-smtp' ) );
+        }
         $manifest = json_decode( $snapshot, true );
         if ( ! is_array( $manifest ) || ! isset( $manifest['version'], $manifest['parts'] ) || $manifest['version'] !== 1 || ! is_array( $manifest['parts'] ) || ! empty( $manifest['unavailable'] ) ) { throw new RuntimeException( self::holdMessage() ); }
         $attachments = array();
