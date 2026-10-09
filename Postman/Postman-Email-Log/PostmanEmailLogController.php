@@ -215,7 +215,11 @@ class PostmanEmailLogController {
 				$to = $meta_values ['original_to'] [0];
 			}
 
-			$success = wp_mail( $to, $meta_values ['original_subject'] [0], $meta_values ['original_message'] [0], $meta_values ['original_headers'] [0] );
+			try {
+                $attachments = PostmanAttachmentReplay::restore( $postid, isset( $meta_values['session_transcript'][0] ) ? $meta_values['session_transcript'][0] : '', true );
+            } catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
+            $attachments = apply_filters( 'post_smtp_resend_attachments', $attachments, $postid );
+            $success = wp_mail( $to, $meta_values ['original_subject'] [0], $meta_values ['original_message'] [0], $meta_values ['original_headers'] [0], $attachments );
 
 			// Postman API: retrieve the result of sending this message from Postman
 			$result = apply_filters( 'postman_wp_mail_result', null );

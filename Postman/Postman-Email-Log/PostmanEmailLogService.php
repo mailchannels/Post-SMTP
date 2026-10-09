@@ -4,6 +4,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require_once dirname(__DIR__ ) . '/PostmanLogFields.php';
+require_once __DIR__ . '/PostmanAttachmentReplay.php';
 require_once POST_SMTP_PATH . '/Postman/Extensions/Core/Notifications/PostmanNotify.php';
 require_once POST_SMTP_PATH . '/Postman/Extensions/Core/StatusSolution.php';
 require_once POST_SMTP_PATH . '/Postman/PostmanEmailLogs.php';
@@ -179,7 +180,7 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 				}
 				
 				$this->createLog( $log, $transcript, $statusMessage, $status, $transport, $message );
-				$this->writeToEmailLog( $log );
+				$this->writeToEmailLog( $log, $message );
 			}
 		}
 
@@ -254,6 +255,8 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 		private function writeToEmailLog( PostmanEmailLog $log, ?PostmanMessage $message = null ) {
 
 		    $options = PostmanOptions::getInstance();
+            $snapshot = $message ? PostmanAttachmentReplay::capture( $message ) : null;
+            if ( $snapshot !== null && strpos( (string) $log->sessionTranscript, PostmanAttachmentReplay::REQUIRED ) === false ) { $log->sessionTranscript .= "\n" . PostmanAttachmentReplay::REQUIRED; }
 
             $new_status = $log->statusMessage;
 
@@ -299,6 +302,7 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 				 */
 				$log_id = $options->is_fallback ? '' : apply_filters( 'post_smtp_update_email_log_id', '' );
 				$log_id = $email_logs->save( $data, $log_id );
+                if ( $log_id ) { PostmanAttachmentReplay::save( $log_id, $snapshot ); }
                 if ( $log_id ) { $log->attemptLogs[] = array( 'storage'=>'table', 'id'=>$log_id, 'transcript'=>$log->sessionTranscript ); }
 				
 				/**
@@ -342,6 +346,7 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 					return;
 				}
 
+				PostmanAttachmentReplay::save( $post_id, $snapshot, true );
 				$log->attemptLogs[] = array( 'storage'=>'post', 'id'=>$post_id, 'transcript'=>$log->sessionTranscript );
                 $this->logger->debug( sprintf( 'Saved message #%s to the database', $post_id ) );
 				$this->logger->trace( $log );

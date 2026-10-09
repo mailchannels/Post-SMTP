@@ -379,7 +379,7 @@ class PostmanEmailLogs {
      */
     public function truncate_log_items( $keep ) {
 
-        return $this->db->get_results(
+        $result = $this->db->get_results(
             $this->db->prepare(
                 "DELETE logs FROM `{$this->db->prefix}{$this->db_name}` logs
                 LEFT JOIN 
@@ -391,6 +391,11 @@ class PostmanEmailLogs {
                 $keep
             )
         );
+        if ( ! $this->db->last_error ) {
+            // Attachment snapshots follow log retention, including older orphans.
+            $this->db->query( "DELETE meta FROM `{$this->db->prefix}{$this->meta_table}` meta LEFT JOIN `{$this->db->prefix}{$this->db_name}` logs ON logs.id=meta.log_id WHERE logs.id IS NULL" );
+        }
+        return $result;
 
     }
 
@@ -908,7 +913,10 @@ class PostmanEmailLogs {
                  * @since 2.5.9
                  * @version 1.0.0
                  */
-                $attachments = apply_filters( 'post_smtp_resend_attachments', array(), $id );
+                try {
+                    $attachments = PostmanAttachmentReplay::restore( $id, isset( $log['session_transcript'] ) ? $log['session_transcript'] : '' );
+                } catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
+                $attachments = apply_filters( 'post_smtp_resend_attachments', $attachments, $id );
 
                 $success = wp_mail( $to, $log['original_subject'], $log['original_message'], $headers, $attachments );
 
