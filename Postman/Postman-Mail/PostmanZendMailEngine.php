@@ -3,6 +3,13 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit; // Exit if accessed directly
 }
 
+if ( ! class_exists( 'PostmanSmtpDeliveryException' ) ) {
+ class PostmanSmtpDeliveryException extends Exception {
+  const OUTCOME_UNKNOWN = 'SMTP delivery outcome unknown.';
+  public function isDeliveryUncertain() { return true; }
+ }
+}
+
 if ( ! class_exists( 'PostmanZendMailEngine' ) ) {
 
 	require_once 'Zend-1.12.10/Loader.php';
@@ -227,7 +234,15 @@ if ( ! class_exists( 'PostmanZendMailEngine' ) ) {
 					$message = sprintf( __( 'Communication Error [334] - make sure the Envelope From email is the same account used to create the Client ID.', 'post-smtp' ) );
 				}
 				// create a new exception
-				$newException = new Exception( $message, $e->getCode() );
+				$connection = $zendTransport->getConnection();
+                if ( $connection && method_exists( $connection, 'isDeliveryUncertain' ) && $connection->isDeliveryUncertain() ) {
+                    $this->transcript .= "\n" . PostmanSmtpDeliveryException::OUTCOME_UNKNOWN;
+                    $newException = new PostmanSmtpDeliveryException( PostmanSmtpDeliveryException::OUTCOME_UNKNOWN . ' ' . $message, $e->getCode(), $e );
+                } else {
+                    $newException = new Exception( $message, $e->getCode(), $e );
+                }
+				// Close the failed SMTP session before a definite-rejection fallback.
+                if ( $connection && method_exists( $connection, 'disconnect' ) ) { $connection->disconnect(); }
 				// throw the new exception after handling
 				throw $newException;
 			}

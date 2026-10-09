@@ -21,6 +21,7 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 		const MAILCHANNELS_AUTH_SECTION = 'postman_mailchannels_auth_section';
 
 		public static function canResendLog( $uri, $transcript, $success ) {
+            if ( strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false ) { return false; }
 			if ( strpos( (string) $uri, self::HOST ) === false ) {
 				return true;
 			}
@@ -31,7 +32,10 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 			return (string) $success === '1' || strpos( (string) $transcript, self::OUTCOME_REJECTED ) !== false;
 		}
 
-		public static function resendHoldMessage() {
+		public static function resendHoldMessage( $transcript = '' ) {
+            if ( strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false ) {
+                return __( 'SMTP delivery outcome is unknown. Verify server acceptance before creating a new send; this log cannot be resent automatically.', 'post-smtp' );
+            }
 			return __( 'MailChannels delivery outcome is unknown. Verify provider acceptance before creating a new send; this log cannot be resent automatically.', 'post-smtp' );
 		}
 

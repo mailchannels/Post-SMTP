@@ -386,6 +386,9 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 					*/
 				   if ($transport !== null) {
 					   do_action( 'post_smtp_on_failed', $log, $message, $engine->getTranscript(), $transport, $e->getMessage() );
+                       if ( $e instanceof PostmanSmtpDeliveryException ) {
+                           PostmanEmailLogService::getInstance()->holdAttemptLogs( $log, PostmanSmtpDeliveryException::OUTCOME_UNKNOWN );
+                       }
 				   } else {
 					   if ($this->logger) {
 						   $this->logger->warning('Transport is null, skipping post_smtp_on_failed action to avoid fatal error.');
@@ -420,7 +423,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		}
 
 		private function fallback( $log, $postMessage, $options ) {
-			if ( $this->exception instanceof PostmanMailChannelsDeliveryException && $this->exception->isDeliveryUncertain() ) {
+			if ( ( $this->exception instanceof PostmanMailChannelsDeliveryException || $this->exception instanceof PostmanSmtpDeliveryException ) && $this->exception->isDeliveryUncertain() ) {
 				return false; // The primary provider may already have accepted the message.
 			}
 

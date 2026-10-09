@@ -54,6 +54,11 @@ class Postman_Zend_Mail_Protocol_Smtp extends Postman_Zend_Mail_Protocol_Abstrac
      */
     protected $_transport = 'tcp';
 
+    // DATA may have reached the peer until a final acceptance/rejection arrives.
+    protected $_deliveryUncertain = false;
+
+    public function isDeliveryUncertain() { return $this->_deliveryUncertain; }
+
 
     /**
      * Indicates that a session is requested to be secure
@@ -338,16 +343,24 @@ You need to contact your web hosting support for help.', $ver_match[1] );
         $this->_send('DATA');
         $this->_expect(354, 120); // Timeout set for 2 minutes as per RFC 2821 4.5.3.2
 
-        foreach (explode(Postman_Zend_Mime::LINEEND, $data) as $line) {
-            if (strpos($line, '.') === 0) {
-                // Escape lines prefixed with a '.'
-                $line = '.' . $line;
+        $this->_deliveryUncertain = true;
+        try {
+            foreach (explode(Postman_Zend_Mime::LINEEND, $data) as $line) {
+                if (strpos($line, '.') === 0) {
+                    $line = '.' . $line;
+                }
+                $this->_send($line);
             }
-            $this->_send($line);
+            $this->_send('.');
+            $this->_expect(250, 600);
+            $this->_deliveryUncertain = false;
+        } catch (Postman_Zend_Mail_Protocol_Exception $e) {
+            // Only a complete explicit negative SMTP reply proves rejection.
+            if ($e->getCode() >= 400 && $e->getCode() <= 599) {
+                $this->_deliveryUncertain = false;
+            }
+            throw $e;
         }
-
-        $this->_send('.');
-        $this->_expect(250, 600); // Timeout set for 10 minutes as per RFC 2821 4.5.3.2
         $this->_data = true;
     }
 

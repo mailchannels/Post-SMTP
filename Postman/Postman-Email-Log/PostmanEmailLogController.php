@@ -204,7 +204,7 @@ class PostmanEmailLogController {
 		if ( ! empty( $postid ) ) {
 			$meta_values = PostmanLogFields::get_instance()->get( $postid );
 			if ( class_exists( 'PostmanMailChannelsTransport' ) && ! PostmanMailChannelsTransport::canResendLog( isset( $meta_values['transport_uri'][0] ) ? $meta_values['transport_uri'][0] : '', isset( $meta_values['session_transcript'][0] ) ? $meta_values['session_transcript'][0] : '', isset( $meta_values['success'][0] ) ? $meta_values['success'][0] : '' ) ) {
-				wp_send_json_error( array( 'message' => PostmanMailChannelsTransport::resendHoldMessage() ) );
+				wp_send_json_error( array( 'message' => PostmanMailChannelsTransport::resendHoldMessage( isset( $meta_values['session_transcript'][0] ) ? $meta_values['session_transcript'][0] : '' ) ) );
 				return;
 			}
 

@@ -10,6 +10,7 @@ require_once POST_SMTP_PATH . '/Postman/PostmanEmailLogs.php';
 
 if ( ! class_exists( 'PostmanEmailLog' ) ) {
 	class PostmanEmailLog {
+        public $attemptLogs = array();
 		public $sender;
 		public $toRecipients;
 		public $ccRecipients;
@@ -78,6 +79,20 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 			}
 			return $inst;
 		}
+
+        // Hold exact logs from this invocation, including a rejected primary whose
+        // fallback later became uncertain. Never match unrelated messages by subject.
+        public function holdAttemptLogs( PostmanEmailLog $log, $marker ) {
+            foreach ( $log->attemptLogs as $attempt ) {
+                $transcript = $attempt['transcript'];
+                if ( strpos( (string) $transcript, $marker ) === false ) { $transcript .= "\n" . $marker; }
+                if ( $attempt['storage'] === 'table' ) {
+                    ( new PostmanEmailLogs() )->update( array( 'session_transcript'=>$transcript ), $attempt['id'] );
+                } else {
+                    PostmanLogFields::get_instance()->update( $attempt['id'], 'session_transcript', $transcript );
+                }
+            }
+        }
 
 		public function write_success_log( $log, $message, $transcript, $transport = null ) {
 			if ( $this->is_notification( $message, $log ) ) {
@@ -284,6 +299,7 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 				 */
 				$log_id = $options->is_fallback ? '' : apply_filters( 'post_smtp_update_email_log_id', '' );
 				$log_id = $email_logs->save( $data, $log_id );
+                if ( $log_id ) { $log->attemptLogs[] = array( 'storage'=>'table', 'id'=>$log_id, 'transcript'=>$log->sessionTranscript ); }
 				
 				/**
 				 * Fires after the email log is saved
@@ -326,7 +342,8 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 					return;
 				}
 
-				$this->logger->debug( sprintf( 'Saved message #%s to the database', $post_id ) );
+				$log->attemptLogs[] = array( 'storage'=>'post', 'id'=>$post_id, 'transcript'=>$log->sessionTranscript );
+                $this->logger->debug( sprintf( 'Saved message #%s to the database', $post_id ) );
 				$this->logger->trace( $log );
 
 				$solution = apply_filters( 'post_smtp_log_solution', null, $new_status, $log, $message );
