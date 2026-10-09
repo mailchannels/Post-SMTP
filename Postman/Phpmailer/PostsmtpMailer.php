@@ -86,6 +86,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 
 		private $transcript = '';
         private $smtpDataEndUnknown = false;
+        private $smtpAttachmentBytes = null;
 
 		public function __construct( $exceptions = null ) {
 			parent::__construct( $exceptions );
@@ -228,6 +229,10 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 					if ( $this->options->getTransportType() !== 'smtp' ) {
 						$result = $postmanWpMail->send( $to, $subject, $body, $headers, $attachments );
 					} else {
+                        $frozen = $this->freezeSmtpAttachments();
+                        $unsupported = $log->replayUnsupported;
+                        list( $postmanMessage, $log ) = $postmanWpMail->createPhpMailerLog( $this, $frozen );
+                        $log->replayUnsupported = $unsupported;
 						$response = $this->sendSmtp();
 						$result = $response;
 						if ( $response ) {
@@ -271,8 +276,46 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 					throw $exc;
 				}
 				return false;
-			}
+			} finally {
+                // File contents must not leak into a later native/API send.
+                $this->smtpAttachmentBytes = null;
+            }
 		}
+
+        /** Read file attachments once without changing native tuples or deduplication. */
+        private function freezeSmtpAttachments() {
+            $bytes = array();
+            $attachments = $this->getAttachments();
+            foreach ( $attachments as &$part ) {
+                if ( ! $part[5] ) {
+                    $path = $part[0];
+                    if ( ! array_key_exists( $path, $bytes ) ) {
+                        if ( ! static::fileIsAccessible( $path ) ) {
+                            throw new phpmailerException( 'Post SMTP could not read a native SMTP attachment before submission.' );
+                        }
+                        $data = @file_get_contents( $path );
+                        if ( $data === false ) {
+                            throw new phpmailerException( 'Post SMTP could not read a native SMTP attachment before submission.' );
+                        }
+                        $bytes[$path] = $data;
+                    }
+                    // The log gets private immutable string tuples; native
+                    // PHPMailer keeps the original path tuples and their identity.
+                    $part[0] = $bytes[$path];
+                    $part[5] = true;
+                }
+            }
+            unset( $part );
+            $this->smtpAttachmentBytes = $bytes;
+            return $attachments;
+        }
+
+        protected function encodeFile( $path, $encoding = 'base64' ) {
+            if ( $this->smtpAttachmentBytes !== null && array_key_exists( $path, $this->smtpAttachmentBytes ) ) {
+                return $this->encodeString( $this->smtpAttachmentBytes[$path], $encoding );
+            }
+            return parent::encodeFile( $path, $encoding );
+        }
 
 		public function sendSmtp() {
 			if ( ! $this->preSend() ) {

@@ -99,7 +99,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
         }
 
         /** Snapshot final native state for either API submission or SMTP logging. */
-        public function createPhpMailerLog( $mailer ) {
+        public function createPhpMailerLog( $mailer, $attachments = null ) {
             $message = new PostmanMessage();
             $message->setFrom( $mailer->From, $mailer->FromName );
             foreach ( array( 'addTo'=>'getToAddresses', 'addCc'=>'getCcAddresses', 'addBcc'=>'getBccAddresses' ) as $add => $get ) {
@@ -118,7 +118,7 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
                 $message->setBodyHtmlPart( $mailer->Body );
                 if ( $mailer->AltBody !== '' ) { $message->setBodyTextPart( $mailer->AltBody ); }
             } else { $message->setBodyTextPart( $mailer->Body ); }
-            $attachments = $mailer->getAttachments();
+            $attachments = $attachments === null ? $mailer->getAttachments() : $attachments;
             foreach ( $attachments as &$attachment ) {
                 if ( $attachment[6] === 'attachment' && $attachment[7] === 0 ) { $attachment[7] = ''; }
             }
