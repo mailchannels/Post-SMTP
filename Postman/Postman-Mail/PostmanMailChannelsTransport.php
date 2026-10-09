@@ -7,6 +7,7 @@
  */
 
 defined( 'ABSPATH' ) || exit;
+require_once dirname( __DIR__ ) . '/Postman-Email-Log/PostmanLogReplay.php';
 
 if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 	class PostmanMailChannelsTransport extends PostmanAbstractModuleTransport implements PostmanModuleTransport {
@@ -21,6 +22,7 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 		const MAILCHANNELS_AUTH_SECTION = 'postman_mailchannels_auth_section';
 
 		public static function canResendLog( $uri, $transcript, $success ) {
+            if ( strpos( (string) $transcript, PostmanLogReplay::PENDING ) !== false || strpos( (string) $transcript, PostmanLogReplay::UNKNOWN ) !== false ) { return false; }
             if ( strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false ) { return false; }
 			if ( strpos( (string) $uri, self::HOST ) === false ) {
 				return true;
@@ -33,6 +35,7 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 		}
 
 		public static function resendHoldMessage( $transcript = '' ) {
+            if ( strpos( (string) $transcript, PostmanLogReplay::PENDING ) !== false || strpos( (string) $transcript, PostmanLogReplay::UNKNOWN ) !== false ) { return PostmanLogReplay::holdMessage(); }
             if ( strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false ) {
                 return __( 'SMTP delivery outcome is unknown. Verify server acceptance before creating a new send; this log cannot be resent automatically.', 'post-smtp' );
             }

@@ -918,11 +918,14 @@ class PostmanEmailLogs {
                 } catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
                 $attachments = apply_filters( 'post_smtp_resend_attachments', $attachments, $id );
 
+                try { $replay = PostmanLogReplay::begin( $id ); }
+                catch ( Exception $error ) { wp_send_json_error( array( 'message'=>$error->getMessage() ) ); return; }
                 $success = wp_mail( $to, $log['original_subject'], $log['original_message'], $headers, $attachments );
 
                 // Postman API: retrieve the result of sending this message from Postman
                 $result = apply_filters( 'postman_wp_mail_result', null );
                 $transcript = $result ['transcript'];
+                PostmanLogReplay::finish( $replay, $transcript );
      
                 // post-handling
                 if ( $success ) {

@@ -5,6 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 require_once dirname(__DIR__ ) . '/PostmanLogFields.php';
 require_once __DIR__ . '/PostmanAttachmentReplay.php';
+require_once __DIR__ . '/PostmanLogReplay.php';
 require_once POST_SMTP_PATH . '/Postman/Extensions/Core/Notifications/PostmanNotify.php';
 require_once POST_SMTP_PATH . '/Postman/Extensions/Core/StatusSolution.php';
 require_once POST_SMTP_PATH . '/Postman/PostmanEmailLogs.php';

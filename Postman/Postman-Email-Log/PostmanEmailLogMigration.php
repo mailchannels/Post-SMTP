@@ -366,7 +366,7 @@ class PostmanEmailLogsMigration {
                 
                             $result = PostmanEmailLogs::get_instance()->save( $log );
             
-                            if ( $result && ! PostmanAttachmentReplay::save( $result, $snapshot ) ) {
+                            if ( $result && ( ! PostmanAttachmentReplay::save( $result, $snapshot ) || ! PostmanLogReplay::saveSource( $result, $ID ) ) ) {
                                 // Keep the source eligible for retry; remove the incomplete copy.
                                 ( new PostmanEmailQueryLog() )->delete_logs( array( $result ) );
                                 $result = false;
