@@ -22,6 +22,7 @@ if ( ! class_exists( 'PostmanEmailLog' ) ) {
 		public $success;
 		public $statusMessage;
 		public $sessionTranscript;
+        public $replayUnsupported = false;
 		public $transportUri;
 		public $replyTo;
 		public $originalTo;
@@ -256,7 +257,7 @@ if ( ! class_exists( 'PostmanEmailLogService' ) ) {
 		private function writeToEmailLog( PostmanEmailLog $log, ?PostmanMessage $message = null ) {
 
 		    $options = PostmanOptions::getInstance();
-            $snapshot = $message ? PostmanAttachmentReplay::capture( $message ) : null;
+            $snapshot = $log->replayUnsupported ? json_encode( array( 'version'=>1, 'unavailable'=>true ) ) : ( $message ? PostmanAttachmentReplay::capture( $message ) : null );
             if ( $snapshot !== null && strpos( (string) $log->sessionTranscript, PostmanAttachmentReplay::REQUIRED ) === false ) { $log->sessionTranscript .= "\n" . PostmanAttachmentReplay::REQUIRED; }
 
             if ( $snapshot !== null && $message && $message->getBodyTextPart() !== null && $message->getBodyTextPart() !== '' && $message->getBodyHtmlPart() !== null && $message->getBodyHtmlPart() !== '' ) { $log->sessionTranscript .= "\n" . PostmanAttachmentReplay::BODIES_REQUIRED; }

@@ -54,6 +54,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 		private $error;
 
 		private $transcript = '';
+        private $smtpDataEndUnknown = false;
 
 		public function __construct( $exceptions = null ) {
 			parent::__construct( $exceptions );
@@ -66,6 +67,14 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 			$this->options = PostmanOptions::getInstance();
 			$this->Debugoutput = function( $str, $level ) {
 				$this->transcript .= $str;
+                // Inspect the structured error at DATA END, before cleanup or
+                // another SMTP command can replace it. Pinned SMTP implementations
+                // emit this phase through their error debug callback.
+                if ( strpos( $str, 'SMTP ERROR: DATA END command failed:' ) === 0 ) {
+                    $error = $this->getSMTPInstance()->getError();
+                    $code = isset( $error['smtp_code'] ) ? (int) $error['smtp_code'] : 0;
+                    $this->smtpDataEndUnknown = $code < 400 || $code >= 600;
+                }
 			};
 		}
 
@@ -77,9 +86,9 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 		}
 
 		public function get_mail_args( $atts ) {
-            // Start each MailChannels wp_mail call with fresh alternative content.
+            // Start each mapped wp_mail call with fresh alternative content.
             // Older core versions retain AltBody on the shared PHPMailer.
-            if ( $this->options->getTransportType() === 'mailchannels_api' ) {
+            if ( in_array( $this->options->getTransportType(), array( 'mailchannels_api', 'smtp' ), true ) ) {
                 $this->AltBody = '';
             }
 			$this->mail_args = array();
@@ -144,6 +153,16 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 
 			list( $to, $subject, $body, $headers, $attachments ) = array_pad( $this->mail_args, 5, null );
 
+            if ( $this->options->getTransportType() === 'smtp' ) {
+                $this->error = null;
+                $this->transcript = '';
+                $this->smtpDataEndUnknown = false;
+                $this->ErrorInfo = '';
+                list( $postmanMessage, $log ) = $postmanWpMail->createPhpMailerLog( $this );
+                // Preserve original native SMTP delivery, but do not offer a
+                // replay that would silently drop signing/calendar/envelope state.
+                $log->replayUnsupported = ! in_array( $this->ContentType, array( 'text/plain', 'text/html' ), true ) || $this->DKIM_domain !== '' || $this->Ical !== '' || $this->sign_key_file !== '' || ( $this->Sender !== '' && $this->Sender !== $this->From );
+            } else {
 			// build the message
 			$postmanMessage = $postmanWpMail->processWpMailCall( $to, $subject, $body, $headers, $attachments );
 
@@ -153,6 +172,8 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 			$log->originalSubject = $subject;
 			$log->originalMessage = $body;
 			$log->originalHeaders = $headers;
+
+            }
 
 			// get the transport and create the transportConfig and engine
 			$transport = PostmanTransportRegistry::getInstance()->getActiveTransport();
@@ -178,6 +199,16 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 
 			} catch ( Exception $exc ) {
 				$this->error = $exc;
+                if ( $this->options->getTransportType() === 'smtp' ) {
+                    $smtp_error = $this->getSMTPInstance()->getError();
+                    if ( isset( $smtp_error['error'] ) && $smtp_error['error'] === 'DATA END command failed' ) {
+                        $code = isset( $smtp_error['smtp_code'] ) ? (int) $smtp_error['smtp_code'] : 0;
+                        $this->smtpDataEndUnknown = $code < 400 || $code >= 600;
+                    }
+                }
+                if ( $this->options->getTransportType() === 'smtp' && $this->smtpDataEndUnknown ) {
+                    $this->transcript .= "\nSMTP delivery outcome unknown.";
+                }
 				$this->mailHeader = '';
 				$this->setError( $exc->getMessage() );
 

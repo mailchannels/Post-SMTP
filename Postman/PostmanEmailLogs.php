@@ -956,6 +956,7 @@ class PostmanEmailLogs {
     
                     // compose the JSON response for the caller
                     $response = array(
+                            'success' => false,
                             'message' => $statusMessage,
                             'transcript' => $transcript,
                     );

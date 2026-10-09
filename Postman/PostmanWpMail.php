@@ -85,6 +85,13 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
             if ( $mailer->DKIM_domain !== '' || $mailer->Ical !== '' || ( $mailer->Sender !== '' && $mailer->Sender !== $mailer->From ) ) {
                 throw new phpmailerException( 'MailChannels cannot preserve PHPMailer signing, calendar or a separate envelope sender.' );
             }
+            list( $message, $log ) = $this->createPhpMailerLog( $mailer );
+            // Keep plugin forced-sender/recipient policy; core owns WordPress hooks.
+            return $this->sendMessage( $message, $log, false );
+        }
+
+        /** Snapshot final native state for either API submission or SMTP logging. */
+        public function createPhpMailerLog( $mailer ) {
             $message = new PostmanMessage();
             $message->setFrom( $mailer->From, $mailer->FromName );
             foreach ( array( 'addTo'=>'getToAddresses', 'addCc'=>'getCcAddresses', 'addBcc'=>'getBccAddresses' ) as $add => $get ) {
@@ -115,13 +122,19 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
             $log->originalSubject = $message->getSubject();
             $log->originalMessage = $message->getBody();
             $headers = array( $this->flatten_headers_for_log( $message ), 'From: ' . $message->getFromAddress()->format() );
+            if ( count( $mailer->getReplyToAddresses() ) > 1 ) {
+                $headers = array_values( array_filter( preg_split( '/\r\n|\r|\n/', implode( "\r\n", $headers ) ), static function ( $header ) { return stripos( $header, 'Reply-To:' ) !== 0; } ) );
+                $reply = array();
+                foreach ( $mailer->getReplyToAddresses() as $address ) { $reply[] = ( new PostmanEmailAddress( $address[0], $address[1] ) )->format(); }
+                $headers[] = 'Reply-To: ' . implode( ', ', $reply );
+            }
+
             foreach ( array( 'Cc'=>'getCcRecipients', 'Bcc'=>'getBccRecipients' ) as $name => $get ) {
                 $value = $this->format_recipients_for_log( $message->$get() );
                 if ( $value !== '' ) { $headers[] = $name . ': ' . $value; }
             }
             $log->originalHeaders = implode( "\r\n", $headers );
-            // Keep plugin forced-sender/recipient policy; core owns WordPress hooks.
-            return $this->sendMessage( $message, $log, false );
+            return array( $message, $log );
         }
 
 		/**
