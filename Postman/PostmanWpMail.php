@@ -78,6 +78,9 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
         /** Core has already filtered and initialized this PHPMailer message. */
         public function sendPhpMailer( $mailer ) {
             $this->init();
+            $this->exception = null;
+            $this->transcript = null;
+            $this->totalTime = null;
             add_filter( 'postman_wp_mail_result', array( $this, 'postman_wp_mail_result' ) );
             try {
                 if ( ! in_array( $mailer->ContentType, array( 'text/plain', 'text/html' ), true ) || count( $mailer->getReplyToAddresses() ) > 1 ) {
@@ -93,6 +96,8 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
                 $this->exception = $error;
                 $this->transcript = 'PHPMailer validation failed before MailChannels submission.';
                 throw $error;
+            } finally {
+                self::registerCompletedResult( $this );
             }
             // Keep plugin forced-sender/recipient policy; core owns WordPress hooks.
             return $this->sendMessage( $message, $log, false );
@@ -350,7 +355,27 @@ if ( ! class_exists( 'PostmanWpMail' ) ) {
 		 * @param PostmanMessage $message
 		 * @return boolean
 		 */
-		public function sendMessage( PostmanMessage $message, PostmanEmailLog $log, $applyWordPressFilters = true ) {
+        /** The last completed send owns the result, even when instances are reused. */
+        public static function registerCompletedResult( $owner ) {
+            $callback = array( $owner, 'postman_wp_mail_result' );
+            remove_filter( 'postman_wp_mail_result', $callback );
+            add_filter( 'postman_wp_mail_result', $callback );
+        }
+
+        public function sendMessage( PostmanMessage $message, PostmanEmailLog $log, $applyWordPressFilters = true ) {
+            $this->exception = null;
+            $this->transcript = null;
+            $this->totalTime = null;
+            try {
+                return $this->sendMessageInternal( $message, $log, $applyWordPressFilters );
+            } finally {
+                // A hook may complete a child send. Restore this outer result
+                // when it completes, without removing unrelated result filters.
+                self::registerCompletedResult( $this );
+            }
+        }
+
+        private function sendMessageInternal( PostmanMessage $message, PostmanEmailLog $log, $applyWordPressFilters ) {
 
 			$this->apply_default_headers( $message );
 

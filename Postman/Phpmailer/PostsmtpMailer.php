@@ -186,6 +186,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 
             if ( $this->options->getTransportType() === 'mailchannels_api' ) {
                 $this->error = null;
+                $this->transcript = '';
                 try {
                     if ( $this->sign_key_file !== '' ) { throw new phpmailerException( 'MailChannels cannot preserve PHPMailer S/MIME signing.' ); }
                     return $postmanWpMail->sendPhpMailer( $this );
@@ -193,6 +194,10 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                 catch ( Exception $error ) {
                     $this->error = $error;
                     $this->setError( $error->getMessage() );
+                    // Validation can fail before the helper registers its result.
+                    if ( ! has_filter( 'postman_wp_mail_result', array( $postmanWpMail, 'postman_wp_mail_result' ) ) ) {
+                        PostmanWpMail::registerCompletedResult( $this );
+                    }
                     if ( $this->exceptions ) { throw $error; }
                     return false;
                 }
@@ -306,6 +311,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 			} finally {
                 // File contents must not leak into a later native/API send.
                 $this->smtpAttachmentBytes = null;
+                PostmanWpMail::registerCompletedResult( $this );
             }
 		}
 
