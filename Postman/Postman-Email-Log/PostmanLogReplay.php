@@ -20,17 +20,38 @@ class PostmanLogReplay {
         return $wpdb->insert( $wpdb->prefix . 'post_smtp_logmeta', array( 'log_id'=>$id, 'meta_key'=>self::SOURCE_KEY, 'meta_value'=>(string) $legacy_id ) ) !== false;
     }
 
+    private static function source( $id, $legacy ) {
+        if ( $legacy ) { return (int) $id; }
+        if ( ! self::hasModernTables() ) { throw new RuntimeException( self::holdMessage() ); }
+        global $wpdb;
+        $value = $wpdb->get_var( PostmanUtils::prepareQueryWithTable( 'SELECT meta_value FROM %i WHERE log_id=%d AND meta_key=%s ORDER BY id DESC LIMIT 1', $wpdb->prefix . 'post_smtp_logmeta', array( $id, self::SOURCE_KEY ) ) );
+        if ( $wpdb->last_error || ( $value !== null && ( ! ctype_digit( (string) $value ) || (int) $value < 1 ) ) ) { throw new RuntimeException( self::holdMessage() ); }
+        return (int) $value;
+    }
+
+    public static function lockName( $id, $legacy = false ) {
+        global $wpdb;
+        $source = self::source( $id, $legacy );
+        $identity = $source ? 'legacy:' . $source : 'modern:' . (int) $id;
+        return 'post-smtp-replay:' . substr( hash( 'sha256', DB_NAME . ':' . $wpdb->prefix . ':' . $identity ), 0, 40 );
+    }
+
+    private static function ownsLock( $name ) {
+        global $wpdb;
+        return (string) $wpdb->get_var( $wpdb->prepare( 'SELECT IS_USED_LOCK(%s)=CONNECTION_ID()', $name ) ) === '1';
+    }
+
+    private static function releaseLock( $name ) {
+        global $wpdb;
+        $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+    }
+
     private static function members( $id, $legacy ) {
         global $wpdb;
         $modern = self::hasModernTables();
-        $source = $legacy ? (int) $id : 0;
+        $source = self::source( $id, $legacy );
         $ids = $legacy ? array() : array( (int) $id );
         if ( $modern ) {
-            if ( ! $legacy ) {
-                $source_value = $wpdb->get_var( PostmanUtils::prepareQueryWithTable( 'SELECT meta_value FROM %i WHERE log_id=%d AND meta_key=%s ORDER BY id DESC LIMIT 1', $wpdb->prefix . 'post_smtp_logmeta', array( $id, self::SOURCE_KEY ) ) );
-                if ( $wpdb->last_error || ( $source_value !== null && ( ! ctype_digit( (string) $source_value ) || (int) $source_value < 1 ) ) ) { throw new RuntimeException( self::holdMessage() ); }
-                $source = (int) $source_value;
-            }
             if ( $source ) {
                 $related = $wpdb->get_col( PostmanUtils::prepareQueryWithTable( 'SELECT log_id FROM %i WHERE meta_key=%s AND meta_value=%s', $wpdb->prefix . 'post_smtp_logmeta', array( self::SOURCE_KEY, (string) $source ) ) );
                 if ( $wpdb->last_error ) { throw new RuntimeException( self::holdMessage() ); }
@@ -51,8 +72,16 @@ class PostmanLogReplay {
     }
 
     private static function read( $member ) {
+        global $wpdb;
         if ( $member['legacy'] ) {
-            return array( 'transport_uri'=>get_post_meta( $member['id'], 'transport_uri', true ), 'session_transcript'=>get_post_meta( $member['id'], 'session_transcript', true ), 'success'=>get_post_meta( $member['id'], 'success', true ) );
+            // Another request may have changed metadata after the controller read it.
+            wp_cache_delete( $member['id'], 'post_meta' );
+            $log = array();
+            foreach ( array( 'transport_uri', 'session_transcript', 'success' ) as $field ) {
+                $log[$field] = get_post_meta( $member['id'], $field, true );
+                if ( $wpdb->last_error ) { throw new RuntimeException( self::holdMessage() ); }
+            }
+            return $log;
         }
         global $wpdb;
         $log = $wpdb->get_row( PostmanUtils::prepareQueryWithTable( 'SELECT transport_uri, session_transcript, success FROM %i WHERE id=%d', $wpdb->prefix . 'post_smtp_logs', array( $member['id'] ) ), ARRAY_A );
@@ -60,42 +89,67 @@ class PostmanLogReplay {
         return $log;
     }
 
-    private static function write( $member, $transcript ) {
-        if ( $member['legacy'] ) {
-            update_post_meta( $member['id'], 'session_transcript', wp_slash( $transcript ) );
-            return get_post_meta( $member['id'], 'session_transcript', true ) === $transcript;
-        }
+    private static function write( $member, $transcript, $lock ) {
         global $wpdb;
-        return $wpdb->update( $wpdb->prefix . 'post_smtp_logs', array( 'session_transcript'=>$transcript ), array( 'id'=>$member['id'] ) ) !== false;
+        // Check ownership in the mutation itself, including after a wpdb reconnect.
+        if ( $member['legacy'] ) {
+            $query = PostmanUtils::prepareQueryWithTable( 'UPDATE %i SET meta_value=%s WHERE post_id=%d AND meta_key=%s AND IS_USED_LOCK(%s)=CONNECTION_ID()', $wpdb->postmeta, array( $transcript, $member['id'], 'session_transcript', $lock ) );
+        } else {
+            $query = PostmanUtils::prepareQueryWithTable( 'UPDATE %i SET session_transcript=%s WHERE id=%d AND IS_USED_LOCK(%s)=CONNECTION_ID()', $wpdb->prefix . 'post_smtp_logs', array( $transcript, $member['id'], $lock ) );
+        }
+        if ( $wpdb->query( $query ) === false || ! self::ownsLock( $lock ) ) { return false; }
+        $log = self::read( $member );
+        return $log && $log['session_transcript'] === $transcript;
     }
 
     public static function begin( $id, $legacy = false ) {
-        $members = self::members( $id, $legacy );
-        foreach ( $members as $member ) {
-            $log = self::read( $member );
-            if ( ! $log || ! PostmanMailChannelsTransport::canResendLog( $log['transport_uri'], $log['session_transcript'], $log['success'] ) ) {
-                throw new RuntimeException( self::holdMessage() );
-            }
+        global $wpdb;
+        $name = self::lockName( $id, $legacy );
+        if ( (string) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s,0)', $name ) ) !== '1' ) {
+            throw new RuntimeException( self::holdMessage() );
         }
-        foreach ( $members as $member ) {
-            $log = self::read( $member );
-            if ( ! self::write( $member, $log['session_transcript'] . "\n" . self::PENDING ) ) {
-                // Partial reservation remains held; no send is started on a write failure.
-                throw new RuntimeException( self::holdMessage() );
+        $reserved = false;
+        try {
+            // Re-resolve lineage under the lock; migration changes must not switch keys.
+            if ( self::lockName( $id, $legacy ) !== $name ) { throw new RuntimeException( self::holdMessage() ); }
+            $members = self::members( $id, $legacy );
+            foreach ( $members as $member ) {
+                $log = self::read( $member );
+                if ( ! $log || ! PostmanMailChannelsTransport::canResendLog( $log['transport_uri'], $log['session_transcript'], $log['success'] ) ) {
+                    throw new RuntimeException( self::holdMessage() );
+                }
             }
+            foreach ( $members as $member ) {
+                $log = self::read( $member );
+                if ( ! self::write( $member, $log['session_transcript'] . "\n" . self::PENDING, $name ) ) {
+                    // Partial reservation remains held; no send starts on a write failure.
+                    throw new RuntimeException( self::holdMessage() );
+                }
+            }
+            // wpdb can reconnect; a replacement session must not send under a lost lock.
+            if ( ! self::ownsLock( $name ) ) { throw new RuntimeException( self::holdMessage() ); }
+            $reserved = true;
+            return array( 'members'=>$members, 'lock'=>$name );
+        } finally {
+            if ( ! $reserved ) { self::releaseLock( $name ); }
         }
-        return $members;
     }
 
-    public static function finish( $members, $transcript ) {
-        $unknown = strpos( (string) $transcript, PostmanMailChannelsTransport::OUTCOME_UNKNOWN ) !== false || strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false;
-        foreach ( $members as $member ) {
-            $log = self::read( $member );
-            if ( ! $log ) { continue; }
-            $saved = str_replace( "\n" . self::PENDING, '', (string) $log['session_transcript'] );
-            if ( $unknown && strpos( $saved, self::UNKNOWN ) === false ) { $saved .= "\n" . self::UNKNOWN; }
-            // A failed completion write leaves PENDING persisted and still blocks replay.
-            self::write( $member, $saved );
+    public static function finish( $reservation, $transcript ) {
+        try {
+            // Lost session ownership must leave the durable pending marker intact.
+            if ( ! self::ownsLock( $reservation['lock'] ) ) { return; }
+            $unknown = strpos( (string) $transcript, PostmanMailChannelsTransport::OUTCOME_UNKNOWN ) !== false || strpos( (string) $transcript, 'SMTP delivery outcome unknown.' ) !== false;
+            foreach ( $reservation['members'] as $member ) {
+                $log = self::read( $member );
+                if ( ! $log ) { continue; }
+                $saved = str_replace( "\n" . self::PENDING, '', (string) $log['session_transcript'] );
+                if ( $unknown && strpos( $saved, self::UNKNOWN ) === false ) { $saved .= "\n" . self::UNKNOWN; }
+                // A failed completion write leaves PENDING persisted and blocks replay.
+                self::write( $member, $saved, $reservation['lock'] );
+            }
+        } finally {
+            self::releaseLock( $reservation['lock'] );
         }
     }
 
