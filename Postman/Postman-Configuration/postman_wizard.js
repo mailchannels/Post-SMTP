@@ -546,7 +546,11 @@ function handleConfigurationResponse(response) {
 	el1.append( html );
 	el2.append( authHtml );
 
-	jQuery( postmanPro ).each( function( index, value ){
+	jQuery.each( postmanPro, function( index, value ){
+		// The localized object also contains nonce metadata, not provider cards.
+		if ( !value || typeof value !== 'object' || !value.extenstion ) {
+			return;
+		}
 	
 		var allRows = jQuery( '.ps-socket-wizad-row' );
 		var totalRows = allRows.length - 1;

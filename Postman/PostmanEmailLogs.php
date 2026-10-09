@@ -921,7 +921,9 @@ class PostmanEmailLogs {
 
                     $this->logger->debug( 'Email was successfully re-sent' );
                     // the message was sent successfully, generate an appropriate message for the user
-                    $statusMessage = sprintf( __( 'Your message was delivered (%d ms) to the SMTP server! Congratulations :)', 'post-smtp' ), $result ['time'] );
+                    $statusMessage = class_exists( 'PostmanMailChannelsTransport' )
+                        ? PostmanMailChannelsTransport::resendSuccessMessage( $transcript, $result ['time'] )
+                        : sprintf( __( 'Your message was delivered (%d ms) to the SMTP server! Congratulations :)', 'post-smtp' ), $result ['time'] );
 
                     // compose the JSON response for the caller
                     $response = array(

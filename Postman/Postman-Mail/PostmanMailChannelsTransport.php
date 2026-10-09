@@ -35,6 +35,14 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 			return __( 'MailChannels delivery outcome is unknown. Verify provider acceptance before creating a new send; this log cannot be resent automatically.', 'post-smtp' );
 		}
 
+		public static function resendSuccessMessage( $transcript, $time ) {
+			// Inspect the completed send, since the configured API may have used SMTP fallback.
+			if ( strpos( (string) $transcript, 'MailChannels HTTP ' ) === 0 && strpos( (string) $transcript, '; accepted for delivery.' ) !== false ) {
+				return sprintf( __( 'MailChannels accepted your message for delivery (%d ms). This does not confirm recipient delivery.', 'post-smtp' ), $time );
+			}
+			return sprintf( __( 'Your message was delivered (%d ms) to the SMTP server! Congratulations :)', 'post-smtp' ), $time );
+		}
+
 		public function __construct( $params ) {
 			parent::__construct( $params );
 
