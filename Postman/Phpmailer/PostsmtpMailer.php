@@ -258,7 +258,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 
 				return $result;
 
-			} catch ( Exception $exc ) {
+			} catch ( Throwable $exc ) {
 				$this->error = $exc;
                 if ( $this->options->getTransportType() === 'smtp' ) {
                     $smtp_error = $this->getSMTPInstance()->getError();
@@ -296,7 +296,10 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
 					do_action( 'post_smtp_on_failed', $log, $postmanMessage, $this->transcript, $transport, $exc->getMessage() );
 				}
 
-				if ( $this->exceptions ) {
+                // Error objects remain programming failures even when PHPMailer
+                // exceptions are disabled. Persist SMTP evidence, then propagate
+                // the same throwable instead of converting it to false.
+                if ( $this->exceptions || ! ( $exc instanceof Exception ) ) {
 					throw $exc;
 				}
 				return false;
@@ -311,7 +314,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                 $connected = parent::smtpConnect( $options );
                 if ( ! $connected && $this->smtpCallbackPhase ) { $this->smtpCallbackOutcome = 'not-sent'; }
                 return $connected;
-            } catch ( Exception $error ) {
+            } catch ( Throwable $error ) {
                 // smtpConnect completes before MAIL/RCPT/DATA. Do not infer
                 // this phase from localized connection-error message text.
                 if ( $this->smtpCallbackPhase ) { $this->smtpCallbackOutcome = 'not-sent'; }
@@ -328,7 +331,7 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
             $this->smtpCallbackOutcome = '';
             try {
                 return parent::smtpSend( $header, $body );
-            } catch ( Exception $error ) {
+            } catch ( Throwable $error ) {
                 // Read definite pre-delivery rejection before postSend's keepalive
                 // cleanup can erase SMTP error state. RCPT errors alone do not
                 // prove no delivery: DATA may already have reached other RCPTs.
