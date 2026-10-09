@@ -113,7 +113,7 @@ if ( ! class_exists( 'PostmanInputSanitizer' ) ) {
             $new_input = apply_filters( 'post_smtp_sanitize', $new_input, $input, $this );
 			delete_transient( 'sendpulse_token' );
 
-			if ( $new_input [ PostmanOptions::CLIENT_ID ] != $this->options->getClientId() || $new_input [ PostmanOptions::CLIENT_SECRET ] != $this->options->getClientSecret() || $new_input [ PostmanOptions::HOSTNAME ] != $this->options->getHostname() ) {
+			if ( ( $new_input [ PostmanOptions::CLIENT_ID ] ?? $this->options->getClientId() ) != $this->options->getClientId() || ( $new_input [ PostmanOptions::CLIENT_SECRET ] ?? $this->options->getClientSecret() ) != $this->options->getClientSecret() || ( $new_input [ PostmanOptions::HOSTNAME ] ?? $this->options->getHostname() ) != $this->options->getHostname() ) {
 				$this->logger->debug( 'Recognized new Client ID' );
 				// the user entered a new client id and we should destroy the stored auth token
 				delete_option( PostmanOAuthToken::OPTIONS_NAME );

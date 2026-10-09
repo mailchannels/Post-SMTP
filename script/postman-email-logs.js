@@ -683,16 +683,17 @@ jQuery(document).ready(function($) {
 				to: to
 			},
 			success: function( response ) {
+				var message = response.message || ( response.data && response.data.message ) || ( typeof response.data === 'string' ? response.data : 'Unable to resend this email.' );
 				
 				if( response.success === true ) {
 
-					alert( response.message );
+					alert( message );
 					logsDT.ajax.reload( null, false );
 
 				}
 				else {
 
-					alert( response.message );
+					alert( message );
 					logsDT.ajax.reload( null, false );
 
 				}

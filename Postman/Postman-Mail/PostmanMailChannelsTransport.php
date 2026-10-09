@@ -14,7 +14,7 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 		const OUTCOME_UNKNOWN = 'MailChannels delivery outcome unknown.';
 		const OUTCOME_REJECTED = 'MailChannels delivery not accepted.';
 
-		const PORT = 0;
+		const PORT = 443;
 		const HOST = 'api.mailchannels.net';
 		const PRIORITY = 49000;
 		const MAILCHANNELS_AUTH_OPTIONS = 'postman_mailchannels_auth_options';

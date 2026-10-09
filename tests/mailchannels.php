@@ -81,6 +81,9 @@ function fails( $callback, $expected ) {
 
 $transport = new PostmanMailChannelsTransport( '/postman-smtp.php' );
 $transport->init();
+$probeSockets = $transport->getSocketsForSetupWizardToProbe( 'fixture.invalid', null );
+check( count( $probeSockets ) === 1 && $probeSockets[0]['host'] === 'api.mailchannels.net' && $probeSockets[0]['port'] === 443 && $probeSockets[0]['smtp'] === false, 'Legacy wizard must probe the HTTPS endpoint on port443.' );
+check( $transport->getProtocol() === 'https' && $transport->getPort() === 443, 'Native transport metadata must identify HTTPS port443.' );
 check( ! $transport->isConfiguredAndReady(), 'Missing credentials must not be ready.' );
 $key = 'mc-test-secret-not-a-real-key';
 configure( array( 'mailchannels_api_key' => base64_encode( $key ), 'sender_email' => 'sender@example.com' ) );
