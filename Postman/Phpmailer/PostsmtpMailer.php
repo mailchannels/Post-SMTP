@@ -247,6 +247,10 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
                         $unsupported = $log->replayUnsupported;
                         list( $postmanMessage, $log ) = $postmanWpMail->createPhpMailerLog( $this, $frozen );
                         $log->replayUnsupported = $unsupported;
+                        // A subclass can bypass smtpSend/postSend observation.
+                        // Treat entry into its send method as an attempt unless
+                        // a trusted native phase proves no delivery occurred.
+                        $this->smtpPhaseStarted = true;
 						$response = $this->sendSmtp();
                         // PHPMailer with exceptions disabled returns false from
                         // postSend. Route that failure through the same log/result
@@ -439,12 +443,22 @@ if ( ! class_exists( 'PostsmtpMailer', false ) && class_exists( 'PHPMailer', fal
             return parent::encodeFile( $path, $encoding );
         }
 
-		public function sendSmtp() {
-			if ( ! $this->preSend() ) {
-				return false;
-			}
-			return $this->postSend();
-		}
+        public function sendSmtp() {
+            // Only the pinned native preSend contract proves no transmission.
+            // A caller override may submit DATA itself before returning false.
+            $native_preflight = ( new ReflectionMethod( $this, 'preSend' ) )->getDeclaringClass()->getName() === ( new ReflectionClass( 'PHPMailer' ) )->getName();
+            try {
+                $prepared = $this->preSend();
+            } catch ( Throwable $error ) {
+                if ( $native_preflight ) { $this->smtpCallbackOutcome = 'not-sent'; }
+                throw $error;
+            }
+            if ( ! $prepared ) {
+                if ( $native_preflight ) { $this->smtpCallbackOutcome = 'not-sent'; }
+                return false;
+            }
+            return $this->postSend();
+        }
 
 		public function postman_wp_mail_result() {
 			$result = array(
