@@ -20,15 +20,16 @@ if ( ! class_exists( 'PostmanMailChannelsTransport' ) ) {
 		const MAILCHANNELS_AUTH_OPTIONS = 'postman_mailchannels_auth_options';
 		const MAILCHANNELS_AUTH_SECTION = 'postman_mailchannels_auth_section';
 
-		public static function canResendLog( $uri, $transcript, $success ) {
-			if ( strpos( (string) $uri, self::HOST ) === false ) {
+		public static function canResendLog( array $log ) {
+			$transcript = (string) ( $log['session_transcript'] ?? '' );
+			if ( strpos( (string) ( $log['transport_uri'] ?? '' ), self::HOST ) === false ) {
 				return true;
 			}
-			if ( strpos( (string) $transcript, self::OUTCOME_UNKNOWN ) !== false ) {
+			if ( strpos( $transcript, self::OUTCOME_UNKNOWN ) !== false ) {
 				return false;
 			}
 			// Older failed logs have no reliable rejection evidence: hold them as well.
-			return (string) $success === '1' || strpos( (string) $transcript, self::OUTCOME_REJECTED ) !== false;
+			return (string) ( $log['success'] ?? '' ) === '1' || strpos( $transcript, self::OUTCOME_REJECTED ) !== false;
 		}
 
 		public static function resendHoldMessage() {
