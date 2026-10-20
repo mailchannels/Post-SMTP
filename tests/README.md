@@ -8,7 +8,8 @@ php tests/mailchannels.php
 
 On PHP 8.2+, the checks use the actual bundled SDK and a fake PSR-18 HTTP
 client. They cover payload serialization, recipients, attachments, errors,
-credential handling, transport readiness, and wizard rendering. On older PHP,
+credential handling, delivery-outcome classification, fallback and resend holds,
+transport readiness, and wizard rendering. On older PHP,
 the same script checks the compatibility guard without loading the SDK.
 No credentials, WordPress installation, network requests, or test dependencies
 are required. WordPress functions are stubbed; this is not a browser test.

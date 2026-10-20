@@ -57,6 +57,7 @@ require $root . '/Postman/Postman-Mail/PostmanMessage.php';
 require $root . '/Postman/Postman-Mail/PostmanMailChannelsTransport.php';
 require $root . '/Postman/Postman-Mail/PostmanMailChannelsMailEngine.php';
 require $root . '/Postman/Wizard/NewWizard.php';
+require $root . '/Postman/PostmanWpMail.php';
 
 $checks = 0;
 function check( $condition, $message ) {
@@ -68,6 +69,14 @@ function check( $condition, $message ) {
 function configure( $options ) {
 	$GLOBALS['stored_options'] = $options;
 	PostmanOptions::getInstance()->reload();
+}
+function uncertain( $engine, $message ) {
+	try {
+		$engine->send( $message );
+	} catch ( PostmanMailChannelsDeliveryException $e ) {
+		return $e->isDeliveryUncertain();
+	}
+	throw new RuntimeException( 'Expected a MailChannels delivery failure.' );
 }
 function fails( $callback, $expected ) {
 	try {
@@ -204,7 +213,7 @@ try {
 	foreach ( array( $key, 'hidden@example.com', 'Private message body', $payload['attachments'][0]['content'] ) as $secret ) {
 		check( strpos( $engine->getTranscript(), $secret ) === false, 'Transcript must omit sensitive payload.' );
 	}
-	foreach ( array( 400, 401, 403, 413, 429, 500 ) as $status ) {
+	foreach ( array( 400, 401, 403, 408, 413, 429, 500 ) as $status ) {
 		$http->response = response( $status, array( 'message' => 'Rejected ' . $key ), array( 'X-Request-ID' => 'failure-123', 'Retry-After' => '60' ) );
 		$before = count( $http->requests );
 		fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'Rejected [redacted]' );
@@ -212,6 +221,10 @@ try {
 		check( strpos( $engine->getTranscript(), 'HTTP ' . $status ) !== false, 'Transcript must identify HTTP status.' );
 		check( strpos( $engine->getTranscript(), 'failure-123' ) !== false, 'Transcript must identify failed request.' );
 		check( strpos( $engine->getTranscript(), $key ) === false, 'Error transcript must redact credentials.' );
+		$ambiguous = $status === 408 || $status >= 500;
+		check( uncertain( $engine, $message ) === $ambiguous, 'HTTP ' . $status . ' must be classified correctly.' );
+		$log = array( 'transport_uri' => 'https://api.mailchannels.net', 'session_transcript' => $engine->getTranscript(), 'success' => '' );
+		check( PostmanMailChannelsTransport::canResendLog( $log ) === ! $ambiguous, 'HTTP ' . $status . ' resend hold must match.' );
 	}
 	check( strpos( $engine->getTranscript(), 'Retry-After: 60' ) !== false, 'Retry metadata must be preserved.' );
 	$http->response = response( 202, array( 'results' => array( array( 'status' => 'failed', 'reason' => 'Sender domain is not authorized' ) ) ) );
@@ -222,6 +235,8 @@ try {
 	}
 	$http->response = new PostSMTP\Vendor\GuzzleHttp\Exception\ConnectException( 'Connection timed out', $request );
 	fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'Connection timed out' );
+	check( uncertain( $engine, $message ), 'Connection failures must leave delivery uncertain.' );
+	check( strpos( $engine->getTranscript(), PostmanMailChannelsTransport::OUTCOME_UNKNOWN ) !== false, 'Uncertain transcript must be marked.' );
 	$http->response = accepted();
 	$before = count( $http->requests );
 	foreach ( array( '/missing-mailchannels-attachment', 'https://example.com/file' ) as $invalid_file ) {
@@ -252,10 +267,42 @@ try {
 	$message->setSubject( 'Subject' );
 	$message->addHeaders( array( 'Content-Transfer-Encoding: base64' ) );
 	fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'reserved message headers' );
+	check( ! uncertain( $engine, $message ), 'SDK validation errors must be confirmed rejections.' );
+	$latin1 = new PostmanMessage();
+	$latin1->setFrom( 'sender@example.com' );
+	$latin1->addTo( 'to@example.com' );
+	$latin1->setSubject( "Invalid \xE9 UTF-8" );
+	$latin1->setBodyTextPart( 'Body' );
+	fails( function () use ( $engine, $latin1 ) { $engine->send( $latin1 ); }, 'encode request payload' );
+	check( ! uncertain( $engine, $latin1 ), 'JSON encoding errors must be confirmed rejections.' );
 	check( count( $http->requests ) === $before, 'SDK validation errors must fail before HTTP.' );
 } finally {
 	unlink( $file );
 }
+$mailchannels = 'https://api.mailchannels.net';
+$unknown = array( 'transport_uri' => $mailchannels, 'session_transcript' => PostmanMailChannelsTransport::OUTCOME_UNKNOWN, 'success' => '' );
+check( ! PostmanMailChannelsTransport::canResendLog( $unknown ), 'Uncertain MailChannels logs must not be resent.' );
+check( ! PostmanMailChannelsTransport::canResendLog( array( 'transport_uri' => $mailchannels, 'session_transcript' => 'HTTP 500', 'success' => '' ) ), 'Older failed MailChannels logs must be held.' );
+check( PostmanMailChannelsTransport::canResendLog( array( 'transport_uri' => $mailchannels, 'success' => '1' ) ), 'Sent MailChannels logs may be resent.' );
+check( PostmanMailChannelsTransport::canResendLog( array( 'transport_uri' => 'smtp://smtp.example.com', 'success' => '' ) ), 'Other mailers must keep resend.' );
+
+class FallbackOptions {
+	public $is_fallback = false;
+	public $checked = 0;
+	public function getFallbackIsEnabled() { $this->checked++; return 'no'; }
+}
+$wpMail = new PostmanWpMail();
+$fallback = new ReflectionMethod( 'PostmanWpMail', 'fallback' );
+$fallback->setAccessible( true );
+$exception = new ReflectionProperty( 'PostmanWpMail', 'exception' );
+$exception->setAccessible( true );
+foreach ( array( true, false ) as $isUncertain ) {
+	$options = new FallbackOptions();
+	$exception->setValue( $wpMail, new PostmanMailChannelsDeliveryException( 'failed', 0, $isUncertain ) );
+	check( $fallback->invoke( $wpMail, null, null, $options ) === false, 'Fallback stub must not send.' );
+	check( ( $options->checked === 0 ) === $isUncertain, 'Fallback must be skipped only for uncertain delivery.' );
+}
+
 define( 'POST_SMTP_API_KEY', 'constant-key' );
 check( PostmanOptions::getInstance()->getMailChannelsApiKey() === 'constant-key', 'Constant credentials must take precedence.' );
 echo "Passed {$checks} checks on PHP " . PHP_VERSION . "\n";
