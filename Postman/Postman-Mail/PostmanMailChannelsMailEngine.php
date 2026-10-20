@@ -79,8 +79,9 @@ class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 			$this->transcript .= sprintf( '; message ID: %s; accepted for delivery.', $result->messageId );
 		} catch ( Throwable $exception ) {
 			$details = $exception->getMessage();
-			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ValidationException ) {
-				$uncertain = false; // SDK validation precedes transport submission.
+			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ValidationException
+				|| $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ConfigurationException ) {
+				$uncertain = false; // SDK validation and JSON encoding precede transport submission.
 			}
 			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\MailChannelsException ) {
 				$status = $exception->getStatusCode();
