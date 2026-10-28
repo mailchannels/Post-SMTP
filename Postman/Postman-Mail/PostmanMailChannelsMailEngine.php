@@ -74,11 +74,16 @@ class PostmanMailChannelsMailEngine implements PostmanMailEngine {
 			$result = $response->results[0];
 			if ( $result->status !== 'sent' ) {
 				$uncertain = $result->status !== 'failed';
-				throw new RuntimeException( 'MailChannels: ' . ( $result->reason ?: __( 'The message was not accepted.', 'post-smtp' ) ) );
+				// Provider reasons can name recipients; logging standards exclude full email addresses.
+				throw new RuntimeException( __( 'MailChannels: The message was not accepted.', 'post-smtp' ) );
 			}
 			$this->transcript .= sprintf( '; message ID: %s; accepted for delivery.', $result->messageId );
 		} catch ( Throwable $exception ) {
 			$details = $exception->getMessage();
+			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ApiException ) {
+				// Provider messages can name recipients; logging standards exclude full email addresses.
+				$details = __( 'MailChannels could not send the message.', 'post-smtp' );
+			}
 			if ( $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ValidationException
 				|| $exception instanceof PostSMTP\Vendor\MailChannels\Exception\ConfigurationException ) {
 				$uncertain = false; // SDK validation and JSON encoding precede transport submission.

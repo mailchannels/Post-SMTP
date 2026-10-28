@@ -214,21 +214,23 @@ try {
 		check( strpos( $engine->getTranscript(), $secret ) === false, 'Transcript must omit sensitive payload.' );
 	}
 	foreach ( array( 400, 401, 403, 408, 413, 429, 500 ) as $status ) {
-		$http->response = response( $status, array( 'message' => 'Rejected ' . $key ), array( 'X-Request-ID' => 'failure-123', 'Retry-After' => '60' ) );
+		$http->response = response( $status, array( 'message' => 'Rejected ' . $key . ' for hidden@example.com' ), array( 'X-Request-ID' => 'failure-123', 'Retry-After' => '60' ) );
 		$before = count( $http->requests );
-		fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'Rejected [redacted]' );
+		fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'could not send the message' );
 		check( count( $http->requests ) === $before + 1, 'Must not silently retry a send.' );
 		check( strpos( $engine->getTranscript(), 'HTTP ' . $status ) !== false, 'Transcript must identify HTTP status.' );
 		check( strpos( $engine->getTranscript(), 'failure-123' ) !== false, 'Transcript must identify failed request.' );
 		check( strpos( $engine->getTranscript(), $key ) === false, 'Error transcript must redact credentials.' );
+		check( strpos( $engine->getTranscript(), 'hidden@example.com' ) === false, 'Error transcript must omit recipient addresses.' );
 		$ambiguous = $status === 408 || $status >= 500;
 		check( uncertain( $engine, $message ) === $ambiguous, 'HTTP ' . $status . ' must be classified correctly.' );
 		$log = array( 'transport_uri' => 'https://api.mailchannels.net', 'session_transcript' => $engine->getTranscript(), 'success' => '' );
 		check( PostmanMailChannelsTransport::canResendLog( $log ) === ! $ambiguous, 'HTTP ' . $status . ' resend hold must match.' );
 	}
 	check( strpos( $engine->getTranscript(), 'Retry-After: 60' ) !== false, 'Retry metadata must be preserved.' );
-	$http->response = response( 202, array( 'results' => array( array( 'status' => 'failed', 'reason' => 'Sender domain is not authorized' ) ) ) );
-	fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'Sender domain is not authorized' );
+	$http->response = response( 202, array( 'results' => array( array( 'status' => 'failed', 'reason' => 'Invalid recipient hidden@example.com' ) ) ) );
+	fails( function () use ( $engine, $message ) { $engine->send( $message ); }, 'not accepted' );
+	check( strpos( $engine->getTranscript(), 'hidden@example.com' ) === false, 'Failed result transcript must omit recipient addresses.' );
 	foreach ( array( response( 202, array() ), response( 200, array( 'data' => array( 'dry run' ) ) ), response( 202, array( 'results' => 'invalid' ) ) ) as $bad_response ) {
 		$http->response = $bad_response;
 		fails( function () use ( $engine, $message ) { $engine->send( $message ); }, '' );
